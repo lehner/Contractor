@@ -153,7 +153,7 @@ class Params {
 	break;
       T val;
       parse(val,get(buf));
-      std::cout <<  loghead() << "Set " << buf << " to " << val << std::endl;
+      std::cout << loghead() << "Set " << buf << " to " << val << std::endl;
       v.push_back(val);
     }
   }
@@ -161,7 +161,7 @@ class Params {
   template<class T>
   void get(const char* name, T& f) {
     parse(f,get(name));
-    std::cout <<  loghead() << "Set " << name << " to " << f << std::endl;
+    std::cout << loghead() << "Set " << name << " to " << f << std::endl;
   }
 
   

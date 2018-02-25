@@ -29,6 +29,7 @@ class Cache {
 public:
 
   std::map<std::string,int> intVals;
+  std::map<std::string,std::vector<int> > vintVals;
   std::set<int> keep_t0;
   int keep_prec;
 
@@ -105,6 +106,52 @@ public:
 };
 
 template<int N>
+std::vector<int> getVIntParam(Params& p, Cache<N>& ca, std::vector<std::string>& args, int iarg, int iter) {
+  if (args.size() <= iarg) {
+    std::cout << "Missing argument " << iarg << " for command " << args[0] << std::endl;
+    assert(0);
+  }
+
+  char suf[32];
+  sprintf(suf,"[%d]",iter);
+  auto n = args[iarg] + suf;
+
+  auto f = ca.vintVals.find(n);
+  if (f == ca.vintVals.end()) {
+    std::vector<int> v;
+    std::string sv = p.get(n.c_str());
+    std::cout << p.loghead() << "Set " << n << " to " << sv << std::endl;
+    p.parse(v,sv);
+    ca.vintVals[n] = v;
+    return v;
+  }  
+    
+  return f->second;
+}
+
+template<int N>
+int getIntParam(Params& p, Cache<N>& ca, std::vector<std::string>& args, int iarg, int iter) {
+  if (args.size() <= iarg) {
+    std::cout << "Missing argument " << iarg << " for command " << args[0] << std::endl;
+    assert(0);
+  }
+
+  char suf[32];
+  sprintf(suf,"[%d]",iter);
+  auto n = args[iarg] + suf;
+
+  auto f = ca.intVals.find(n);
+  if (f == ca.intVals.end()) {
+    int v;
+    p.get(n.c_str(),v);
+    ca.intVals[n] = v;
+    return v;
+  }  
+    
+  return f->second;
+}
+
+template<int N>
 int getTimeParam(Params& p, Cache<N>& ca, std::vector<std::string>& args, int iarg, int iter, bool isT0) {
   if (args.size() <= iarg) {
     std::cout << "Missing argument " << iarg << " for command " << args[0] << std::endl;
@@ -129,7 +176,7 @@ int getTimeParam(Params& p, Cache<N>& ca, std::vector<std::string>& args, int ia
 }
 
 template<int N>
-void parse(std::string contr, Params& p, Cache<N>& ca, int iter, bool learn) {
+void parse(CorrelatorsOutput& co, std::string contr, Params& p, Cache<N>& ca, int iter, bool learn) {
 
   char line[2048];
 
@@ -173,8 +220,15 @@ void parse(std::string contr, Params& p, Cache<N>& ca, int iter, bool learn) {
     } else if (!args[0].compare("BEGINTRACE")) {
     } else if (!args[0].compare("ENDTRACE")) {
     } else if (!args[0].compare("MOM")) {
+      std::vector<int> mom = getVIntParam(p,ca,args,1,iter);
     } else if (!args[0].compare("GAMMA")) {
+      int mu = getIntParam(p,ca,args,1,iter);
+      if (!learn) {
+      }
     } else if (!args[0].compare("LIGHT_LGAMMA_LIGHT")) {
+      int mu = getIntParam(p,ca,args,1,iter);
+      if (!learn) {
+      }
     } else {
       std::cout << "Unknown command " << args[0] << " in line " << line << std::endl;
       assert(0);
@@ -204,12 +258,19 @@ void run(Params& p) {
   int Niter;
   PADD(p,Niter);
 
+  int precision;
+  PADD(p,precision);
+  ca.keep_prec = precision;
+
   // Define output correlator as well
+  std::string output;
+  PADD(p,output);
+  CorrelatorsOutput co(output);
 
   // parse what we need
   for (int iter=0;iter<Niter;iter++) {
     for (auto& cc : contractions) {
-      parse(cc,p,ca,iter,true);
+      parse(co,cc,p,ca,iter,true);
     }
   }
 
@@ -221,7 +282,7 @@ void run(Params& p) {
   // Compute
   for (int iter=0;iter<Niter;iter++) {
     for (auto& cc : contractions) {
-      parse(cc,p,ca,iter,false);
+      parse(co,cc,p,ca,iter,false);
     }
   }
 

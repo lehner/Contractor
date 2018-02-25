@@ -153,3 +153,54 @@ class Correlators {
 
 
 };
+
+
+class CorrelatorsOutput {
+ public:
+  FILE* _f;
+
+  CorrelatorsOutput(std::string fn) {
+
+    _f = fopen(fn.c_str(),"w+b");
+    assert(_f);
+    
+  }
+
+  ~CorrelatorsOutput() {
+    if (_f)
+      fclose(_f);
+  }
+
+  template<class S>
+    void write_correlator(char* fn, std::vector<S>& corr, bool verbose = true) {
+
+    if (!_f)
+      return;
+
+    int NT = (int)corr.size();
+    int ntag = (int)strlen(fn) + 1;
+    unsigned short flags = 0;
+
+    std::vector<ComplexD> c(NT);
+    for (int i=0;i<NT;i++) {
+      c[i] = corr[i]; // first change to complex double no matter what the input was
+    }
+
+
+    uint32_t crc32 = crc32_threaded((unsigned char*)&c[0],sizeof(ComplexD)*NT,0x0);
+	  
+    if (verbose)
+      std::cout << "Wrote " << fn << std::endl;
+
+    assert(fwrite(&ntag,4,1,_f) +
+	   fwrite(fn,ntag,1,_f) +
+	   fwrite(&crc32,4,1,_f) +
+	   fwrite(&NT,2,1,_f) +
+	   fwrite(&flags,2,1,_f) +
+	   fwrite(&c[0],sizeof(ComplexD)*NT,1,_f) == 6);
+
+    fflush(_f);
+  }
+
+
+};
