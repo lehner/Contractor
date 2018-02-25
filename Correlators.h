@@ -30,13 +30,14 @@ class BufferedIO {
   std::string fn;
 
  public:
- BufferedIO(std::string _fn, size_t _buf_size) : buf_size(_buf_size), fn(_fn) {
+   BufferedIO(std::string _fn, size_t _buf_size) : buf_size(_buf_size), fn(_fn) {
     f = fopen(fn.c_str(),"rb");
     assert(f);
 
     fseeko(f,0,SEEK_END);
     size = ftello(f);
     fseeko(f,0,SEEK_SET);
+    pos = 0;
 
     fill();
 
@@ -60,10 +61,13 @@ class BufferedIO {
 
     pos += to_read;
 
-    std::cout << "Read " << (to_read/1024./1024./1024) << " GB from " << fn << " at " << (size/1024./1024./1024/(t1-t0)) << " GB/s" << std::endl;
+    std::cout << "Read " << (to_read/1024./1024./1024.) << " GB from " << fn << " at " << (size/1024./1024./1024./(t1-t0)) << " GB/s" 
+	      << " to offset " << (pos/1024./1024./1024.) << " GB" << " / " << (size/1024./1024./1024.) << " GB"
+	      << std::endl;
   }
 
   bool eof() {
+    //std::cout << "Eof: " << pos << " / " << size << " / " << pos_in_data << " / " << data.size() << std::endl;
     return pos_in_data == data.size() && pos == size;
   }
 
