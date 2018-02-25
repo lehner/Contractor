@@ -33,6 +33,15 @@ public:
   int keep_prec;
 
   Cache() {
+  //Singlet< Matrix<4, ComplexD > >* gamma = new Singlet< Matrix<4, ComplexD > >[6];
+  //for (int i=0;i<6;i++)
+  //  initSpinor(gamma[i](),i);
+
+  //std::cout << "Available momenta" << std::endl;
+  //for (auto& t : ca.moms) {
+  //  std::cout << t.first << std::endl;
+  //}
+
   }
 
   void fill_peramb(int n,int np,int s,int sp,int t0,int prec,std::vector<ComplexD>& res) {
@@ -132,15 +141,6 @@ void parse(std::string contr, Params& p, Cache<N>& ca, int iter, bool learn) {
 
   FILE* f = fopen(contr.c_str(),"rt");
   assert(f);
-
-  //Singlet< Matrix<4, ComplexD > >* gamma = new Singlet< Matrix<4, ComplexD > >[6];
-  //for (int i=0;i<6;i++)
-  //  initSpinor(gamma[i](),i);
-
-  //std::cout << "Available momenta" << std::endl;
-  //for (auto& t : ca.moms) {
-  //  std::cout << t.first << std::endl;
-  //}
 
   while (!feof(f)) {
     if (!fgets(line,sizeof(line),f))
