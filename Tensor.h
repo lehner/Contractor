@@ -139,6 +139,7 @@ public:
   template<typename vobj2>
   Matrix operator*(const Matrix<N,vobj2>& o) const {
     Matrix<N,sobj> ret;
+#pragma omp for
     for (int i=0;i<N;i++)
       for (int j=0;j<N;j++) {
 	sobj r = zero;

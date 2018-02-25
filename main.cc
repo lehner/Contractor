@@ -12,6 +12,7 @@
 #include <string.h>
 #include <set>
 #include "Params.h"
+#include <omp.h>
 
 typedef std::complex<double> ComplexD;
 
@@ -86,8 +87,13 @@ public:
       return false;
 
     auto& m=moms[buf];
-    if (m.size() == 0)
+    if (m.size() == 0) {
       m.resize(res.size());
+      for (int t=0;t<(int)res.size();t++)
+	for (int i=0;i<N;i++)
+	  for (int j=0;j<N;j++)
+	    m[t](i,j)=NAN;
+    }
     for (int t=0;t<(int)res.size();t++)
       m[t](n,np) = res[t];
     return true;
@@ -223,6 +229,10 @@ void parse(ComplexD& result, std::string contr, Params& p, Cache<N>& ca, int ite
 
   std::vector<ComplexD> factor;
 
+  //M=M*M; takes about 0.2s this is large?   N*4=240;  240^3 = 13824000 = 0.013 G with O(20 flop/site) -> 1 Gflop/s
+  // Now this is without threading, so we can hope for 64 Gflops/s;  still seems slow... ahh... does not use AVX512
+  // with avx512 only 25%-30% speedup
+
   while (!feof(f)) {
     if (!fgets(line,sizeof(line),f))
       break;
@@ -291,6 +301,57 @@ void run(Params& p) {
   Correlators c;
   Cache<N> ca;
 
+#if 1
+  // TODO: the following code is optimal and hits the memory bandwidth of MCDRAM
+  // Make it as stand-alone function and base parse routine around this
+  {
+    //Matrix< N, Matrix< 4,ComplexD > > M;
+    Matrix< 4*N, ComplexD > M;
+    memset(&M._internal[0],0,sizeof(ComplexD)*4*N*4*N);
+
+#define Ns 8
+#define Nt 60
+    Matrix< Ns*Nt, ComplexD > A,B,C;
+    memset(&A._internal[0],0,sizeof(ComplexD)*Ns*Nt*Ns*Nt);
+    memset(&B._internal[0],0,sizeof(ComplexD)*Ns*Nt*Ns*Nt);
+    memset(&C._internal[0],0,sizeof(ComplexD)*Ns*Nt*Ns*Nt);
+    double ta,tb;
+
+    for (int iter=0;iter<10;iter++) {
+#pragma omp parallel shared(M,ta,tb)
+    {
+#pragma omp single
+     {
+       std::cout << "Threads: " << omp_get_num_threads() << std::endl;
+      ta=dclock();
+     }
+     //M=M*M;
+     ComplexD* pA = &A._internal[0];
+     ComplexD* pB = &B._internal[0];
+     ComplexD* pC = &C._internal[0];
+#pragma omp for
+     for (int ab=0;ab<Ns*Nt*Ns*Nt;ab++) {
+       int j=ab / (Ns*Nt);
+       int i=ab % (Ns*Nt);
+       for (int l=0;l<Ns*Nt;l++)
+	 pA[i + Ns*Nt*j] += pB[l + Ns*Nt*i] * pC[l + Ns*Nt*j];
+    }
+#pragma omp single
+     {
+      tb=dclock();
+     }
+    }
+    double flopsComplexAdd = 2;
+    double flopsComplexMul = 6;
+    double flops = pow(Nt*Ns,3.0)*(flopsComplexMul + flopsComplexAdd);
+    double gbs = pow(Nt*Ns,3.0)*sizeof(ComplexD)*4.0 / 1024./1024./1024.;
+    std::cout << "Performance of matrix mul: " << (flops/1024./1024./1024./(tb-ta)) << " Gflops/s" 
+    " and memory bandwidth is " << gbs/(tb-ta) << " GB/s "
+    << std::endl;
+    }
+  }
+
+#endif
   std::vector<std::string> contractions;
   std::vector<std::string> input;
   PADD(p,contractions);
