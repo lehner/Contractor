@@ -1,0 +1,99 @@
+
+  C. Lehner
+  2018
+  Distillation contractor
+
+------------------------------
+
+  Example: 2pi - svec
+
+------------------------------
+
+FACTOR 1.0 0.0
+BEGINTRACE
+LIGHT t0 t0
+MOM p0
+GAMMA muPi
+LIGHT t0 t
+GAMMA muVec
+LIGHTBAR t t0
+GAMMA muPi
+MOM p1
+ENDTRACE
+
+
+Comment:
+- The parameters will be parsed from the command line or from a params input file
+- LIGHT is the light quark perambulator
+- LIGHTBAR = G5 DAGGER(LIGHT) G5  *with time coordinates swapped*
+  In this convention of coordinates we can replace LIGHTBAR with LIGHT without need to change
+  parameters.  The difference (for exact solves) for LIGHT and LIGHTBAR should only exist
+  with regard to on which source time-slices the propagator was inverted.
+
+
+
+------------------------------
+
+  Example: 2pi - lvec
+
+------------------------------
+
+FACTOR 1.0 0.0
+BEGINTRACE
+LIGHT t0 t0
+MOM p0
+GAMMA muPi
+LIGHT_LGAMMA_LIGHT t0 t muVec t0
+GAMMA muPi
+MOM p1
+ENDTRACE
+
+
+Comments:
+- LIGHT_LGAMMA_LIGHT t0 t mu t1
+  is the local mu-operator insertion at time t with attached perambulators from t0 and back to t1
+
+
+------------------------------
+
+  Further examples:
+
+------------------------------
+
+Comments:
+- The above should suffice also for the 2pi - 2pi cases with multiple trace terms and multiple
+  diagrams written as
+
+  FACTOR ...
+  BEGINTRACE
+  ...
+  ENDTRACE
+  BEGINTRACE
+  ...
+  ENDTRACE
+
+  FACTOR ...
+  BEGINTRACE
+  ...
+  BEGINTRACE
+
+- The parameters provided for t0, t, mu, ... should be provided in tuples.
+  One way to do this is to use the "Params" class and to have a file as
+
+   precision=0  # sloppy
+   input[0]=fileA.dat  # contains perambs etc. for this config
+   input[1]=fileB.dat
+   contractions[0]=contrFile0.dat  # contains instructions as described above in text format
+   t0[0]=0
+   t[0]=0
+   mu[0]=0
+   t0[1]=0
+   t[1]=1
+   mu[1]=0
+
+   All of these results should be written to a results correlator independently.  There
+   should be another program that averages them and does the AMA correction.  The idea
+   of the multiple parameters is to allow for cache re-use of loaded perambulators etc.
+
+
+
