@@ -71,13 +71,16 @@ class BufferedIO {
     // get all we can from currently filled data
     off_t left = data.size() - pos_in_data;
     if (left >= sz) {
-      memcpy(dst,&data[pos_in_data],sz);
+      if (dst)
+	memcpy(dst,&data[pos_in_data],sz);
       pos_in_data += sz;
       return;
     }
 
-    memcpy(dst,&data[pos_in_data],left);
-    dst = (void*)((char*)dst + left);
+    if (dst) {
+      memcpy(dst,&data[pos_in_data],left);
+      dst = (void*)((char*)dst + left);
+    }
     sz -= left;
 
     // if not enough, switch parity, fill, and try to get rest from new parity
@@ -136,6 +139,7 @@ class Correlators {
 	nadded++;
       } else {
 	nskipped++;
+	bio.get(0,sizeof(ComplexD)*NT); // this just skips ahead
       }
     }
     double t3=dclock();
