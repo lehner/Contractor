@@ -97,6 +97,17 @@ public:
 template<int N>
 void parse(std::string contr, Params& p, Cache<N>& ca, bool learn) {
 
+  char line[2048];
+
+  if (learn) {
+    std::cout << "Parsing " << contr << std::endl;
+  } else {
+    std::cout << "Processing " << contr << std::endl;
+  }
+
+  FILE* f = fopen(contr.c_str(),"rt");
+  assert(f);
+
   //Singlet< Matrix<4, ComplexD > >* gamma = new Singlet< Matrix<4, ComplexD > >[6];
   //for (int i=0;i<6;i++)
   //  initSpinor(gamma[i](),i);
@@ -106,12 +117,24 @@ void parse(std::string contr, Params& p, Cache<N>& ca, bool learn) {
   //  std::cout << t.first << std::endl;
   //}
 
-  if (learn) {
-    // update mask in ca for parameters that we need
-  } else {
-    // evaluate diagram for each parmeter set given in p and write it to correlator output (need to add to params here)
+  while (!feof(f)) {
+    if (!fgets(line,sizeof(line),f))
+      break;
+
+    auto args = split(std::string(line),' ');
+
+    if (learn) {
+      // update mask in ca for parameters that we need
+      if (!args[0].compare("LIGHT")) {
+	for (auto a : args)
+	  std::cout << a << std::endl;
+      }
+    } else {
+      // evaluate diagram for each parmeter set given in p and write it to correlator output (need to add to params here)
+    }
   }
 
+  fclose(f);
 }
 
 template<int N>
