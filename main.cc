@@ -31,7 +31,10 @@ public:
   std::map<std::string,int> intVals;
   std::map<std::string,std::vector<int> > vintVals;
   std::set<int> keep_t0;
+  std::set<std::string> keep_mom;
   int keep_prec;
+
+  std::map< std::string, std::vector< Matrix< N, ComplexD > > > moms;
 
   Cache() {
   //Singlet< Matrix<4, ComplexD > >* gamma = new Singlet< Matrix<4, ComplexD > >[6];
@@ -45,34 +48,52 @@ public:
 
   }
 
-  void fill_peramb(int n,int np,int s,int sp,int t0,int prec,std::vector<ComplexD>& res) {
+  bool fill_peramb(int n,int np,int s,int sp,int t0,int prec,std::vector<ComplexD>& res) {
+
+    if (!keep_t0.count(t0))
+      return false;
+
     //assert(res.size() == NT);
     //printf("%d %d %d %d %d %d\n",n,np,s,sp,t0,prec);
     //for (int t=0;t<NT;t++) {
       //peramb(prec)(t,t0)(n,np)(s,sp) = res[t];
     //}
+
+    return true;
   }
 
-  void fill_gamma(int n,int np,int s,int sp,int t0,int mu,int prec,std::vector<ComplexD>& res) {
+  bool fill_gamma(int n,int np,int s,int sp,int t0,int mu,int prec,std::vector<ComplexD>& res) {
+
+    if (!keep_t0.count(t0))
+      return false;
+
     //assert(res.size() == NT);
     if (mu<3) {
       //for (int t=0;t<NT;t++) {
 	//gmu(prec)(mu)(t,t0)(n,np)(s,sp) = res[t];
       //}
     }
+
+    return true;
   }
 
-  void fill_mom(int mx,int my,int mz,int n,int np,std::vector<ComplexD>& res) {
+  bool fill_mom(int mx,int my,int mz,int n,int np,std::vector<ComplexD>& res) {
     //assert(res.size() == NT);
     char buf[64];
     sprintf(buf,"%d_%d_%d",mx,my,mz);
-    //auto& m= moms[buf];
-    //for (int t=0;t<NT;t++)
-    //  m(t)(n,np) = res[t];
+
+    if (!keep_mom.count(buf))
+      return false;
+
+    auto& m=moms[buf];
+    if (m.size() == 0)
+      m.resize(res.size());
+    for (int t=0;t<(int)res.size();t++)
+      m[t](n,np) = res[t];
+    return true;
   }
 
   bool operator()(char* tag, std::vector<ComplexD>& res) {
-    return false;
 
     tag+=7;
     if (!strncmp(tag,"pera",4)) {
@@ -80,15 +101,13 @@ public:
       int prec = *tag - '0';
       int n,np,s,sp,t0;
       tag+=2;
-      if (sscanf(tag,"n_%d_%d_s_%d_%d_t_%d",&n,&np,&s,&sp,&t0)==5) {
-	fill_peramb(n,np,s,sp,t0,prec,res);
-      }
+      assert(sscanf(tag,"n_%d_%d_s_%d_%d_t_%d",&n,&np,&s,&sp,&t0)==5);
+      return fill_peramb(n,np,s,sp,t0,prec,res);
     } else if (!strncmp(tag,"mom",3)) {
       tag+=4;
       int mx,my,mz,n,np;
-      if (sscanf(tag,"%d_%d_%d_n_%d_%d",&mx,&my,&mz,&n,&np)==5) {
-	fill_mom(mx,my,mz,n,np,res);
-      }
+      assert(sscanf(tag,"%d_%d_%d_n_%d_%d",&mx,&my,&mz,&n,&np)==5);
+      return fill_mom(mx,my,mz,n,np,res);
     } else if (tag[0]=='G') {
       tag+=1;
       int mu = *tag - '0';
@@ -96,17 +115,18 @@ public:
       int prec = *tag - '0';
       tag+=2;
       int n,np,s,sp,t0;
-      if (sscanf(tag,"n_%d_%d_s_%d_%d_t_%d",&n,&np,&s,&sp,&t0)==5) {
-	fill_gamma(n,np,s,sp,t0,mu,prec,res);
-      }
+      assert(sscanf(tag,"n_%d_%d_s_%d_%d_t_%d",&n,&np,&s,&sp,&t0)==5);
+      return fill_gamma(n,np,s,sp,t0,mu,prec,res);
     }
-    //exit(0);
+
+    return false;
+
   }
 
 };
 
 template<int N>
-std::vector<int> getVIntParam(Params& p, Cache<N>& ca, std::vector<std::string>& args, int iarg, int iter) {
+std::vector<int> getMomParam(Params& p, Cache<N>& ca, std::vector<std::string>& args, int iarg, int iter) {
   if (args.size() <= iarg) {
     std::cout << "Missing argument " << iarg << " for command " << args[0] << std::endl;
     assert(0);
@@ -123,6 +143,10 @@ std::vector<int> getVIntParam(Params& p, Cache<N>& ca, std::vector<std::string>&
     std::cout << p.loghead() << "Set " << n << " to " << sv << std::endl;
     p.parse(v,sv);
     ca.vintVals[n] = v;
+
+    assert(v.size() == 3);
+    sprintf(suf,"%d_%d_%d",v[0],v[1],v[2]);
+    ca.keep_mom.insert(suf);
     return v;
   }  
     
@@ -197,6 +221,8 @@ void parse(ComplexD& result, std::string contr, Params& p, Cache<N>& ca, int ite
   //  FACTOR starts a new factor, if previous one was present, add it to result
   //  Current matrix in spin-mode-space; when begintrace set this to unity, when endtrace take trace of it and multiply to current factor
 
+  std::vector<ComplexD> factor;
+
   while (!feof(f)) {
     if (!fgets(line,sizeof(line),f))
       break;
@@ -228,7 +254,7 @@ void parse(ComplexD& result, std::string contr, Params& p, Cache<N>& ca, int ite
     } else if (!args[0].compare("BEGINTRACE")) {
     } else if (!args[0].compare("ENDTRACE")) {
     } else if (!args[0].compare("MOM")) {
-      std::vector<int> mom = getVIntParam(p,ca,args,1,iter);
+      std::vector<int> mom = getMomParam(p,ca,args,1,iter);
     } else if (!args[0].compare("GAMMA")) {
       int mu = getIntParam(p,ca,args,1,iter);
       if (!learn) {
@@ -248,8 +274,15 @@ void parse(ComplexD& result, std::string contr, Params& p, Cache<N>& ca, int ite
 
   double t1=dclock();
 
-  if (!learn)
+  if (!learn) {
     std::cout << "Processing iteration " << iter << " of " << contr << " in " << (t1-t0) << " s" << std::endl;
+    result = 0.0;
+    for (auto f : factor) {
+      result += f;
+    }
+  } else {
+    assert(factor.size() == 0);
+  }
 
 }
 
