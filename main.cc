@@ -176,7 +176,7 @@ int getTimeParam(Params& p, Cache<N>& ca, std::vector<std::string>& args, int ia
 }
 
 template<int N>
-void parse(CorrelatorsOutput& co, std::string contr, Params& p, Cache<N>& ca, int iter, bool learn) {
+void parse(ComplexD& result, std::string contr, Params& p, Cache<N>& ca, int iter, bool learn) {
 
   char line[2048];
 
@@ -188,6 +188,14 @@ void parse(CorrelatorsOutput& co, std::string contr, Params& p, Cache<N>& ca, in
 
   FILE* f = fopen(contr.c_str(),"rt");
   assert(f);
+
+  //
+  // Logic:
+  //
+  // Variables: 
+  //  Result (complex number)
+  //  FACTOR starts a new factor, if previous one was present, add it to result
+  //  Current matrix in spin-mode-space; when begintrace set this to unity, when endtrace take trace of it and multiply to current factor
 
   while (!feof(f)) {
     if (!fgets(line,sizeof(line),f))
@@ -255,9 +263,6 @@ void run(Params& p) {
   PADD(p,contractions);
   PADD(p,input);
 
-  int Niter;
-  PADD(p,Niter);
-
   int precision;
   PADD(p,precision);
   ca.keep_prec = precision;
@@ -267,10 +272,23 @@ void run(Params& p) {
   PADD(p,output);
   CorrelatorsOutput co(output);
 
+  // Set output vector size
+  int NT;
+  std::vector<int> _dt;
+  std::vector<std::string> _tag;
+  std::vector<double> _scale;
+  PADD(p,NT);
+  PADD(p,_dt);
+  PADD(p,_tag);
+  PADD(p,_scale);
+  
+  int Niter = _dt.size();
+
   // parse what we need
   for (int iter=0;iter<Niter;iter++) {
+    ComplexD res = 0.0;
     for (auto& cc : contractions) {
-      parse(co,cc,p,ca,iter,true);
+      parse(res,cc,p,ca,iter,true);
     }
   }
 
@@ -280,13 +298,40 @@ void run(Params& p) {
   }
 
   // Compute
-  for (int iter=0;iter<Niter;iter++) {
-    for (auto& cc : contractions) {
-      parse(co,cc,p,ca,iter,false);
+  for (auto& cc : contractions) {
+    std::map<std::string, std::vector<ComplexD> > res;
+
+    for (int iter=0;iter<Niter;iter++) {
+
+      auto f = res.find(_tag[iter]);
+      if (f == res.end()) {
+	std::vector<ComplexD> r0(NT);
+	for (int i=0;i<NT;i++)
+	  r0[i] = NAN;
+	res[_tag[iter]] = r0;
+      }
+      f = res.find(_tag[iter]);
+
+      assert(_dt[iter] >= 0 && _dt[iter] < NT);
+
+      ComplexD r = 0.0;
+      parse(r,cc,p,ca,iter,false);
+      assert(!isnan(r.real())); // important to make remaining logic sound
+
+      ComplexD& t = f->second[_dt[iter]];
+      ComplexD v = _scale[iter] * r;
+      if (isnan(t.real()))
+	t=v;
+      else
+	t+=v;
+    }
+
+    for (auto& f : res) {
+      char buf[4096]; // bad even if this likely is large enough
+      sprintf(buf,"%s/%s",cc.c_str(),f.first.c_str());
+      co.write_correlator(buf,f.second);
     }
   }
-
-  
 }
 
 int main(int argc, char* argv[]) {
