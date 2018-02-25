@@ -28,6 +28,7 @@ template<int N>
 class Cache {
 public:
 
+  std::map<std::string,int> intVals;
   std::set<int> keep_t0;
   int keep_prec;
 
@@ -95,15 +96,39 @@ public:
 };
 
 template<int N>
-void parse(std::string contr, Params& p, Cache<N>& ca, bool learn) {
+int getTimeParam(Params& p, Cache<N>& ca, std::vector<std::string>& args, int iarg, int iter, bool isT0) {
+  if (args.size() <= iarg) {
+    std::cout << "Missing argument " << iarg << " for command " << args[0] << std::endl;
+    assert(0);
+  }
+
+  char suf[32];
+  sprintf(suf,"[%d]",iter);
+  auto n = args[iarg] + suf;
+
+  auto f = ca.intVals.find(n);
+  if (f == ca.intVals.end()) {
+    int v;
+    p.get(n.c_str(),v);
+    ca.intVals[n] = v;
+    if (isT0)
+      ca.keep_t0.insert(v);
+    return v;
+  }  
+    
+  return f->second;
+}
+
+template<int N>
+void parse(std::string contr, Params& p, Cache<N>& ca, int iter, bool learn) {
 
   char line[2048];
 
   if (learn) {
-    std::cout << "Parsing " << contr << std::endl;
-  } else {
-    std::cout << "Processing " << contr << std::endl;
+    std::cout << "Parsing iteration " << iter << " of " << contr << std::endl;
   }
+
+  double t0 = dclock();
 
   FILE* f = fopen(contr.c_str(),"rt");
   assert(f);
@@ -121,20 +146,49 @@ void parse(std::string contr, Params& p, Cache<N>& ca, bool learn) {
     if (!fgets(line,sizeof(line),f))
       break;
 
+    for (int i=strlen(line)-1;i>=0;i--)
+      if (line[i]=='\n' || line[i]=='\r' || line[i]==' ')
+	line[i]='\0';
+      else
+	break;
+
+    if (line[0]=='#' || line[0]=='\0')
+      continue;
+
     auto args = split(std::string(line),' ');
 
-    if (learn) {
-      // update mask in ca for parameters that we need
-      if (!args[0].compare("LIGHT")) {
-	for (auto a : args)
-	  std::cout << a << std::endl;
+    if (!args[0].compare("LIGHT")) {
+      int t0 = getTimeParam(p,ca,args,1,iter,false);
+      int t1 = getTimeParam(p,ca,args,2,iter,true);
+
+      if (!learn) {
       }
+    } else if (!args[0].compare("LIGHTBAR")) {
+      int t0 = getTimeParam(p,ca,args,1,iter,true);
+      int t1 = getTimeParam(p,ca,args,2,iter,false);
+
+      if (!learn) {
+      }
+    } else if (!args[0].compare("FACTOR")) {
+    } else if (!args[0].compare("BEGINTRACE")) {
+    } else if (!args[0].compare("ENDTRACE")) {
+    } else if (!args[0].compare("MOM")) {
+    } else if (!args[0].compare("GAMMA")) {
+    } else if (!args[0].compare("LIGHT_LGAMMA_LIGHT")) {
     } else {
-      // evaluate diagram for each parmeter set given in p and write it to correlator output (need to add to params here)
+      std::cout << "Unknown command " << args[0] << " in line " << line << std::endl;
+      assert(0);
     }
+
   }
 
   fclose(f);
+
+  double t1=dclock();
+
+  if (!learn)
+    std::cout << "Processing iteration " << iter << " of " << contr << " in " << (t1-t0) << " s" << std::endl;
+
 }
 
 template<int N>
@@ -147,11 +201,16 @@ void run(Params& p) {
   PADD(p,contractions);
   PADD(p,input);
 
+  int Niter;
+  PADD(p,Niter);
+
   // Define output correlator as well
 
   // parse what we need
-  for (auto& cc : contractions) {
-    parse(cc,p,ca,true);
+  for (int iter=0;iter<Niter;iter++) {
+    for (auto& cc : contractions) {
+      parse(cc,p,ca,iter,true);
+    }
   }
 
   // now load inputs with mask for needed parameters
@@ -160,8 +219,10 @@ void run(Params& p) {
   }
 
   // Compute
-  for (auto& cc : contractions) {
-    parse(cc,p,ca,false);
+  for (int iter=0;iter<Niter;iter++) {
+    for (auto& cc : contractions) {
+      parse(cc,p,ca,iter,false);
+    }
   }
 
   
