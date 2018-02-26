@@ -156,8 +156,8 @@ class Params {
 	break;
       T val;
       parse(val,get(buf));
-      if (!mpi_id)
-	std::cout << loghead() << "Set " << buf << " to " << val << std::endl;
+      //if (!mpi_id)
+      //std::cout << loghead() << "Set " << buf << " to " << val << std::endl;
       v.push_back(val);
     }
   }

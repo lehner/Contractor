@@ -421,15 +421,17 @@ void run(Params& p,int argc,char* argv[]) {
 
   // Set output vector size
   int NT;
-  std::vector<int> _dt;
-  std::vector<std::string> _tag;
-  std::vector<double> _scale;
+  std::vector< std::vector<int> > _dt;
+  std::vector< std::vector<std::string> > _tag;
+  std::vector< std::vector<double> > _scale;
   PADD(p,NT);
   PADD(p,_dt);
   PADD(p,_tag);
   PADD(p,_scale);
   
   int Niter = _dt.size();
+  assert(_tag.size() == Niter);
+  assert(_scale.size() == Niter);
 
   // parse what we need
   for (int iter=0;iter<Niter;iter++) {
@@ -450,17 +452,6 @@ void run(Params& p,int argc,char* argv[]) {
 
     for (int iter=0;iter<Niter;iter++) {
 
-      auto f = res.find(_tag[iter]);
-      if (f == res.end()) {
-	std::vector<ComplexD> r0(NT);
-	for (int i=0;i<NT;i++)
-	  r0[i] = NAN;
-	res[_tag[iter]] = r0;
-      }
-      f = res.find(_tag[iter]);
-
-      assert(_dt[iter] >= 0 && _dt[iter] < NT);
-
       ComplexD r = 0.0;
 
       if (iter % mpi_n == mpi_id)
@@ -468,12 +459,31 @@ void run(Params& p,int argc,char* argv[]) {
 
       assert(!isnan(r.real())); // important to make remaining logic sound
 
-      ComplexD& t = f->second[_dt[iter]];
-      ComplexD v = _scale[iter] * r;
-      if (isnan(t.real()))
-	t=v;
-      else
-	t+=v;
+      assert(_dt[iter].size() == _scale[iter].size());
+      assert(_dt[iter].size() == _tag[iter].size());
+
+      // do as many cuts as we want
+      for (int jj=0;jj<_dt[iter].size();jj++) {
+
+	auto f = res.find(_tag[iter][jj]);
+	if (f == res.end()) {
+	  std::vector<ComplexD> r0(NT);
+	  for (int i=0;i<NT;i++)
+	    r0[i] = NAN;
+	  res[_tag[iter][jj]] = r0;
+	}
+	f = res.find(_tag[iter][jj]);
+
+	assert(_dt[iter][jj] >= 0 && _dt[iter][jj] < NT);
+	
+	ComplexD& t = f->second[_dt[iter][jj]];
+	ComplexD v = _scale[iter][jj] * r;
+	if (isnan(t.real()))
+	  t=v;
+	else
+	  t+=v;
+
+      }
     }
 
     for (auto& f : res) {
