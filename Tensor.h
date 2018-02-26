@@ -232,6 +232,76 @@ void initSpinor(Matrix<4, T>& m, int l) {
 }
 
 /*
+  Right-multiply spinor
+
+  A = B*spin
+  A[i,j] = B[i,l]*spin[l,j]
+  
+  spin[l,j] is only nonzero for a single value l=spinIdx[j]
+
+  A[i,j] = B[i,spinIdx[j]] * spinCoef[j]
+*/
+
+static int spinIdx_0[4] = { 3, 2, 1, 0 };
+static ComplexD spinVal_0[4] = { ComplexD(0.0,-1.0), ComplexD(0.0,-1.0), ComplexD(0.0,1.0), ComplexD(0.0,1.0) };
+
+static int spinIdx_1[4] = { 3, 2, 1, 0 };
+static ComplexD spinVal_1[4] = { -1.0, 1.0, 1.0, -1.0 };
+
+static int spinIdx_2[4] = { 2, 3, 0, 1 };
+static ComplexD spinVal_2[4] = { ComplexD(0.0,-1.0), ComplexD(0.0,1.0), ComplexD(0.0,1.0), ComplexD(0.0,-1.0) };
+
+static int spinIdx_3[4] = { 2, 3, 0, 1 };
+static ComplexD spinVal_3[4] = { 1.0, 1.0, 1.0, 1.0 };
+
+static int spinIdx_5[4] = { 0, 1, 2, 3 };
+static ComplexD spinVal_5[4] = { 1.0, 1.0, -1.0, -1.0 };
+
+template<int N>
+void fast_spin(Matrix<N, ComplexD>& A, Matrix<N, ComplexD>& B, int mu) {
+  ComplexD* pA = &A._internal[0];
+  ComplexD* pB = &B._internal[0];
+
+  int* spinIdx;
+  ComplexD* spinVal;
+
+  switch (mu) {
+  case 0:
+    spinIdx = spinIdx_0;
+    spinVal = spinVal_0;
+    break;
+  case 1:
+    spinIdx = spinIdx_1;
+    spinVal = spinVal_1;
+    break;
+  case 2:
+    spinIdx = spinIdx_2;
+    spinVal = spinVal_2;
+    break;
+  case 3:
+    spinIdx = spinIdx_3;
+    spinVal = spinVal_3;
+    break;
+  case 5:
+    spinIdx = spinIdx_5;
+    spinVal = spinVal_5;
+    break;
+  default:
+    std::cout << "Unknown mu=" << mu << std::endl;
+    assert(0);
+  }
+#pragma omp for
+  for (int ab=0;ab<N*N;ab++) {
+    int j=ab / N;
+    int i=ab % N;
+
+    int jn = j / 4;
+    int js = j % 4;
+    pA[i + N*j] = pB[i + N*(jn*4 + spinIdx[js])] * spinVal[js];
+  }
+}
+
+/*
   For testing
 */
 double randf() {
@@ -278,6 +348,26 @@ void fast_trans(Matrix<N, ComplexD>& A, Matrix<N, ComplexD>& B) {
 }
 
 template<int N>
+void fast_dag(Matrix<N, ComplexD>& A, Matrix<N, ComplexD>& B) {
+  ComplexD* pA = &A._internal[0];
+  ComplexD* pB = &B._internal[0];
+#pragma omp for
+  for (int ab=0;ab<N*N;ab++) {
+    int j=ab / N;
+    int i=ab % N;
+    pA[i + N*j] = conj(pB[j + N*i]);
+  }
+}
+
+
+template<int N>
+void fast_cp(Matrix<N, ComplexD>& A, Matrix<N, ComplexD>& B) {
+  ComplexD* pA = &A._internal[0];
+  ComplexD* pB = &B._internal[0];
+  memcpy(pA,pB,sizeof(ComplexD)*N*N);
+}
+
+template<int N>
 void fast_mult(Matrix<N, ComplexD>& A, Matrix<N, ComplexD>& B, Matrix<N, ComplexD>& C, Matrix<N, ComplexD>& BT) {
   ComplexD* pA = &A._internal[0];
   fast_trans(BT,B);
@@ -294,6 +384,27 @@ void fast_mult(Matrix<N, ComplexD>& A, Matrix<N, ComplexD>& B, Matrix<N, Complex
   }
 }
 
+template<int N, int Nmode>
+void fast_mult_mode(Matrix<N, ComplexD>& A, Matrix<N, ComplexD>& B, Matrix<Nmode, ComplexD>& C, Matrix<N, ComplexD>& BT) {
+
+  assert(Nmode*4 == N);
+
+  ComplexD* pA = &A._internal[0];
+  fast_trans(BT,B);
+  ComplexD* pBT = &BT._internal[0];
+  ComplexD* pC = &C._internal[0];
+#pragma omp for
+  for (int ab=0;ab<N*N;ab++) {
+    int j=ab / N;
+    int i=ab % N;
+    int js = j % 4;
+    int jn = j / 4;
+    ComplexD r = 0.0;
+    for (int ln=0;ln<Nmode;ln++)
+      r += pBT[ln*4 + js + N*i] * pC[ln + Nmode*jn];
+    pA[i + N*j] = r;
+  }
+}
 
 template<int Nt>
 void testFastMatrix() {

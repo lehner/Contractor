@@ -36,17 +36,11 @@ public:
   int keep_prec;
 
   std::map< std::string, std::vector< Matrix< N, ComplexD > > > moms;
+  std::map< int, std::vector< Matrix< 4*N, ComplexD > > > peramb;
+
+#define SIDX(n,s) ((n)*4 + (s))
 
   Cache() {
-  //Singlet< Matrix<4, ComplexD > >* gamma = new Singlet< Matrix<4, ComplexD > >[6];
-  //for (int i=0;i<6;i++)
-  //  initSpinor(gamma[i](),i);
-
-  //std::cout << "Available momenta" << std::endl;
-  //for (auto& t : ca.moms) {
-  //  std::cout << t.first << std::endl;
-  //}
-
   }
 
   bool fill_peramb(int n,int np,int s,int sp,int t0,int prec,std::vector<ComplexD>& res) {
@@ -54,11 +48,25 @@ public:
     if (!keep_t0.count(t0))
       return false;
 
-    //assert(res.size() == NT);
-    //printf("%d %d %d %d %d %d\n",n,np,s,sp,t0,prec);
-    //for (int t=0;t<NT;t++) {
-      //peramb(prec)(t,t0)(n,np)(s,sp) = res[t];
-    //}
+    if (!res.size())
+      return true;
+
+    auto& p=peramb[t0];
+    if (p.size() == 0) {
+      p.resize(res.size());
+
+      // Remark: don't use threading here!  OMP overhead dominates!
+      for (int t=0;t<(int)res.size();t++)
+	for (int i=0;i<4*N;i++)
+	  for (int j=0;j<4*N;j++)
+	    p[t](i,j)=NAN;
+
+    }
+
+    // Remark: don't use threading here!  OMP overhead dominates!
+    for (int t=0;t<(int)res.size();t++) {
+      p[t](SIDX(n,s),SIDX(np,sp)) = res[t];
+    }
 
     return true;
   }
@@ -86,16 +94,23 @@ public:
     if (!keep_mom.count(buf))
       return false;
 
+    if (!res.size())
+      return true;
+
     auto& m=moms[buf];
     if (m.size() == 0) {
       m.resize(res.size());
+
+      // Don't use threading here!  OMP overhead dominates.
       for (int t=0;t<(int)res.size();t++)
 	for (int i=0;i<N;i++)
 	  for (int j=0;j<N;j++)
 	    m[t](i,j)=NAN;
     }
+
     for (int t=0;t<(int)res.size();t++)
       m[t](n,np) = res[t];
+
     return true;
   }
 
@@ -228,7 +243,7 @@ void parse(ComplexD& result, std::string contr, Params& p, Cache<N>& ca, int ite
   //  Current matrix in spin-mode-space; when begintrace set this to unity, when endtrace take trace of it and multiply to current factor
 
   std::vector<ComplexD> factor;
-  Matrix< 4*N, ComplexD > M, tmp;
+  Matrix< 4*N, ComplexD > M, tmp, tmp2, res;
 
   while (!feof(f)) {
     if (!fgets(line,sizeof(line),f))
@@ -246,17 +261,29 @@ void parse(ComplexD& result, std::string contr, Params& p, Cache<N>& ca, int ite
     auto args = split(std::string(line),' ');
 
     if (!args[0].compare("LIGHT")) {
-      int t0 = getTimeParam(p,ca,args,1,iter,false);
-      int t1 = getTimeParam(p,ca,args,2,iter,true);
+      int t = getTimeParam(p,ca,args,1,iter,false);
+      int t0 = getTimeParam(p,ca,args,2,iter,true);
 
       if (!learn) {
-	// fast_mult(res,M, LIGHT, tmp)
+#pragma omp parallel
+	{
+	  fast_mult(res,M, ca.peramb[t0][t], tmp);
+	  fast_cp(M,res);
+	}
       }
     } else if (!args[0].compare("LIGHTBAR")) {
+      int t = getTimeParam(p,ca,args,2,iter,false);
       int t0 = getTimeParam(p,ca,args,1,iter,true);
-      int t1 = getTimeParam(p,ca,args,2,iter,false);
 
       if (!learn) {
+#pragma omp parallel
+	{
+	  fast_spin(res,M,5);
+	  fast_dag(tmp2,ca.peramb[t0][t]);
+	  fast_mult(M,res, tmp2, tmp);
+	  fast_spin(res,M,5);
+	  fast_cp(M,res);
+	}
       }
     } else if (!args[0].compare("FACTOR")) {
       if (!learn) {
@@ -273,9 +300,26 @@ void parse(ComplexD& result, std::string contr, Params& p, Cache<N>& ca, int ite
       }
     } else if (!args[0].compare("MOM")) {
       std::vector<int> mom = getMomParam(p,ca,args,1,iter);
+      int t = getTimeParam(p,ca,args,2,iter,false);
+      if (!learn) {
+	assert(mom.size() == 3);
+	char buf[64];
+	sprintf(buf,"%d_%d_%d",mom[0],mom[1],mom[2]);
+	auto& m=ca.moms[buf];
+#pragma omp parallel
+	{
+	  fast_mult_mode(res,M, m[t], tmp);
+	  fast_cp(M,res);
+	}
+      }
     } else if (!args[0].compare("GAMMA")) {
       int mu = getIntParam(p,ca,args,1,iter);
       if (!learn) {
+#pragma omp parallel
+	{
+	  fast_spin(res,M,mu);
+	  fast_cp(M,res);
+	}
       }
     } else if (!args[0].compare("LIGHT_LGAMMA_LIGHT")) {
       int mu = getIntParam(p,ca,args,1,iter);
