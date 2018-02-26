@@ -241,13 +241,14 @@ int getTimeParam(Params& p, Cache<N>& ca, std::vector<std::string>& args, int ia
     int v;
     p.get(n.c_str(),v);
     ca.intVals[n] = v;
-    if (tf == TF_IST0_PERAMB)
-      ca.keep_t0.insert(v);
-    else if (tf == TF_IST0_LGL)
-      ca.keep_t0_lgl.insert(v);
-    return v;
-  }  
-    
+    f = ca.intVals.find(n);
+  }
+
+  if (tf == TF_IST0_PERAMB)
+    ca.keep_t0.insert(f->second);
+  else if (tf == TF_IST0_LGL)
+    ca.keep_t0_lgl.insert(f->second);
+
   return f->second;
 }
 
@@ -298,6 +299,8 @@ void parse(ComplexD& result, std::string contr, Params& p, Cache<N>& ca, int ite
 
       if (!learn) {
 	const auto& p = ca.peramb.find(t0);
+	if (p == ca.peramb.end())
+	  std::cout << "Did not find " << t0 << std::endl;
 	assert(p != ca.peramb.end());
 #pragma omp parallel
 	{
@@ -306,9 +309,8 @@ void parse(ComplexD& result, std::string contr, Params& p, Cache<N>& ca, int ite
 	}
       }
     } else if (!args[0].compare("LIGHTBAR")) {
-      int t = getTimeParam(p,ca,args,2,iter,TF_NONE);
       int t0 = getTimeParam(p,ca,args,1,iter,TF_IST0_PERAMB);
-
+      int t = getTimeParam(p,ca,args,2,iter,TF_NONE);
       if (!learn) {
 	const auto& p = ca.peramb.find(t0);
 	assert(p != ca.peramb.end());
