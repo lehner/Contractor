@@ -228,10 +228,7 @@ void parse(ComplexD& result, std::string contr, Params& p, Cache<N>& ca, int ite
   //  Current matrix in spin-mode-space; when begintrace set this to unity, when endtrace take trace of it and multiply to current factor
 
   std::vector<ComplexD> factor;
-
-  //M=M*M; takes about 0.2s this is large?   N*4=240;  240^3 = 13824000 = 0.013 G with O(20 flop/site) -> 1 Gflop/s
-  // Now this is without threading, so we can hope for 64 Gflops/s;  still seems slow... ahh... does not use AVX512
-  // with avx512 only 25%-30% speedup
+  Matrix< 4*N, ComplexD > M, tmp;
 
   while (!feof(f)) {
     if (!fgets(line,sizeof(line),f))
@@ -253,6 +250,7 @@ void parse(ComplexD& result, std::string contr, Params& p, Cache<N>& ca, int ite
       int t1 = getTimeParam(p,ca,args,2,iter,true);
 
       if (!learn) {
+	// fast_mult(res,M, LIGHT, tmp)
       }
     } else if (!args[0].compare("LIGHTBAR")) {
       int t0 = getTimeParam(p,ca,args,1,iter,true);
@@ -261,8 +259,18 @@ void parse(ComplexD& result, std::string contr, Params& p, Cache<N>& ca, int ite
       if (!learn) {
       }
     } else if (!args[0].compare("FACTOR")) {
+      if (!learn) {
+	assert(args.size() >= 3);
+	factor.push_back( ComplexD( atof( args[1].c_str()), atof( args[2].c_str() ) ) );
+      }
     } else if (!args[0].compare("BEGINTRACE")) {
+      if (!learn)
+	identity_mat(M);
     } else if (!args[0].compare("ENDTRACE")) {
+      if (!learn) {
+	assert(factor.size());
+	factor[factor.size()-1] *= M.trace();
+      }
     } else if (!args[0].compare("MOM")) {
       std::vector<int> mom = getMomParam(p,ca,args,1,iter);
     } else if (!args[0].compare("GAMMA")) {
@@ -297,61 +305,13 @@ void parse(ComplexD& result, std::string contr, Params& p, Cache<N>& ca, int ite
 }
 
 template<int N>
-void run(Params& p) {
+void run(Params& p,int argc,char* argv[]) {
   Correlators c;
   Cache<N> ca;
 
-#if 1
-  // TODO: the following code is optimal and hits the memory bandwidth of MCDRAM
-  // Make it as stand-alone function and base parse routine around this
-  {
-    //Matrix< N, Matrix< 4,ComplexD > > M;
-    Matrix< 4*N, ComplexD > M;
-    memset(&M._internal[0],0,sizeof(ComplexD)*4*N*4*N);
+  if (argc >= 2 && !strcmp(argv[1],"--performance"))
+    testFastMatrix<4*N>();
 
-#define Ns 8
-#define Nt 60
-    Matrix< Ns*Nt, ComplexD > A,B,C;
-    memset(&A._internal[0],0,sizeof(ComplexD)*Ns*Nt*Ns*Nt);
-    memset(&B._internal[0],0,sizeof(ComplexD)*Ns*Nt*Ns*Nt);
-    memset(&C._internal[0],0,sizeof(ComplexD)*Ns*Nt*Ns*Nt);
-    double ta,tb;
-
-    for (int iter=0;iter<10;iter++) {
-#pragma omp parallel shared(M,ta,tb)
-    {
-#pragma omp single
-     {
-       std::cout << "Threads: " << omp_get_num_threads() << std::endl;
-      ta=dclock();
-     }
-     //M=M*M;
-     ComplexD* pA = &A._internal[0];
-     ComplexD* pB = &B._internal[0];
-     ComplexD* pC = &C._internal[0];
-#pragma omp for
-     for (int ab=0;ab<Ns*Nt*Ns*Nt;ab++) {
-       int j=ab / (Ns*Nt);
-       int i=ab % (Ns*Nt);
-       for (int l=0;l<Ns*Nt;l++)
-	 pA[i + Ns*Nt*j] += pB[l + Ns*Nt*i] * pC[l + Ns*Nt*j];
-    }
-#pragma omp single
-     {
-      tb=dclock();
-     }
-    }
-    double flopsComplexAdd = 2;
-    double flopsComplexMul = 6;
-    double flops = pow(Nt*Ns,3.0)*(flopsComplexMul + flopsComplexAdd);
-    double gbs = pow(Nt*Ns,3.0)*sizeof(ComplexD)*4.0 / 1024./1024./1024.;
-    std::cout << "Performance of matrix mul: " << (flops/1024./1024./1024./(tb-ta)) << " Gflops/s" 
-    " and memory bandwidth is " << gbs/(tb-ta) << " GB/s "
-    << std::endl;
-    }
-  }
-
-#endif
   std::vector<std::string> contractions;
   std::vector<std::string> input;
   PADD(p,contractions);
@@ -435,13 +395,13 @@ int main(int argc, char* argv[]) {
   PADD(p,N);
 
   if (N==60) {
-    run<60>(p);
+    run<60>(p,argc,argv);
   } else if (N==120) {
-    run<120>(p);
+    run<120>(p,argc,argv);
   } else if (N==150) {
-    run<150>(p);
+    run<150>(p,argc,argv);
   } else if (N==500) {
-    run<500>(p);
+    run<500>(p,argc,argv);
   } else {
     std::cout << "Unknown basis size " << N << " needs to be added at compile-time for efficiency" << std::endl;
   }

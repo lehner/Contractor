@@ -50,6 +50,7 @@ public:
   sobj& operator()(int i) { assert(i<N); return _internal[i]; }
 };
 
+
 template<int N, typename sobj>
 class Matrix {
 public:
@@ -72,6 +73,14 @@ public:
     for (int i=0;i<N;i++)
       r += (*this)(i,i);
     return r;    
+  }
+
+  sobj norm() {
+    sobj r = zero;
+    for (int i=0;i<N;i++)
+      for (int j=0;j<N;j++)
+	r += std::norm((*this)(i,j));
+    return r;
   }
 
   friend std::ostream &operator<<(std::ostream &os, const Matrix &m) { 
@@ -139,7 +148,6 @@ public:
   template<typename vobj2>
   Matrix operator*(const Matrix<N,vobj2>& o) const {
     Matrix<N,sobj> ret;
-#pragma omp for
     for (int i=0;i<N;i++)
       for (int j=0;j<N;j++) {
 	sobj r = zero;
@@ -163,6 +171,14 @@ public:
     for (int i=0;i<N;i++)
       for (int j=0;j<N;j++) {
 	(*this)(i,j) += o(i,j);
+      }
+    return *this;
+  }
+
+  Matrix& operator-=(const Matrix& o) {
+    for (int i=0;i<N;i++)
+      for (int j=0;j<N;j++) {
+	(*this)(i,j) -= o(i,j);
       }
     return *this;
   }
@@ -213,4 +229,121 @@ void initSpinor(Matrix<4, T>& m, int l) {
     m(2,2)=m(3,3)=-1.;
     break;
   }
+}
+
+/*
+  For testing
+*/
+double randf() {
+  return (double)rand() / (double)RAND_MAX - 0.5;
+}
+
+ComplexD randc() {
+  return ComplexD(randf(),randf());
+}
+
+template<int N>
+void random_mat(Matrix<N, ComplexD>& A) {
+  for (int i=0;i<N;i++)
+    for (int j=0;j<N;j++)
+      A(i,j)=randc();
+}
+
+template<int N>
+void identity_mat(Matrix<N, ComplexD>& A) {
+  for (int i=0;i<N;i++)
+    for (int j=0;j<N;j++)
+      A(i,j)=(i==j) ? 1.0 : 0.0;
+}
+
+
+/*
+  Fast matrix routines
+*/
+template<int N>
+void fast_zero(Matrix<N, ComplexD>& A) {
+  memset(&A._internal[0],0,sizeof(ComplexD)*N);
+}
+
+template<int N>
+void fast_trans(Matrix<N, ComplexD>& A, Matrix<N, ComplexD>& B) {
+  ComplexD* pA = &A._internal[0];
+  ComplexD* pB = &B._internal[0];
+#pragma omp for
+  for (int ab=0;ab<N*N;ab++) {
+    int j=ab / N;
+    int i=ab % N;
+    pA[i + N*j] = pB[j + N*i];
+  }
+}
+
+template<int N>
+void fast_mult(Matrix<N, ComplexD>& A, Matrix<N, ComplexD>& B, Matrix<N, ComplexD>& C, Matrix<N, ComplexD>& BT) {
+  ComplexD* pA = &A._internal[0];
+  fast_trans(BT,B);
+  ComplexD* pBT = &BT._internal[0];
+  ComplexD* pC = &C._internal[0];
+#pragma omp for
+  for (int ab=0;ab<N*N;ab++) {
+    int j=ab / N;
+    int i=ab % N;
+    ComplexD r = 0.0;
+    for (int l=0;l<N;l++)
+      r += pBT[l + N*i] * pC[l + N*j];
+    pA[i + N*j] = r;
+  }
+}
+
+
+template<int Nt>
+void testFastMatrix() {
+
+  // The following code is optimal and hits the memory bandwidth of MCDRAM
+  {
+    Matrix< Nt, ComplexD > A,B,C,Ap,_BT_;
+    fast_zero(A);
+    fast_zero(Ap);
+    fast_zero(B);
+    fast_zero(C);
+
+    random_mat(B);
+    random_mat(C);
+
+    //identity_mat(B);
+    //identity_mat(C);
+
+    double ta,tb;
+
+    for (int iter=0;iter<10;iter++) {
+#pragma omp parallel
+    {
+#pragma omp single
+     {
+       std::cout << "Threads: " << omp_get_num_threads() << std::endl;
+      ta=dclock();
+     }
+
+     fast_mult(A,B,C,_BT_);
+
+#pragma omp single
+     {
+      tb=dclock();
+     }
+    }
+    double flopsComplexAdd = 2;
+    double flopsComplexMul = 6;
+    double flops = pow(Nt,3.0)*(flopsComplexMul + flopsComplexAdd);
+    double gbs = pow(Nt,3.0)*sizeof(ComplexD)*4.0 / 1024./1024./1024.;
+    std::cout << "Performance of matrix mul: " << (flops/1024./1024./1024./(tb-ta)) << " Gflops/s" 
+    " and memory bandwidth is " << gbs/(tb-ta) << " GB/s "
+    << std::endl;
+
+    Ap=B*C;
+
+    A -= Ap;
+    printf("Norm diff: %g, Norm A: %g\n",A.norm().real(),Ap.norm().real());
+
+    }
+  }
+
 }
