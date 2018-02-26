@@ -161,8 +161,12 @@ class CorrelatorsOutput {
 
   CorrelatorsOutput(std::string fn) {
 
-    _f = fopen(fn.c_str(),"w+b");
-    assert(_f);
+    if (!mpi_id) {
+      _f = fopen(fn.c_str(),"w+b");
+      assert(_f);
+    } else {
+      _f = 0;
+    }
     
   }
 

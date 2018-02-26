@@ -47,7 +47,8 @@ class Params {
 
   Params(const char* fn) : _fn(fn) {
     FILE* f = fopen(fn,"rt");
-    std::cout <<  "Opening parameters " << fn << std::endl;
+    if (!mpi_id)
+      std::cout <<  "Opening parameters " << fn << std::endl;
     assert(f);
     while (!feof(f)) {
       char buf[4096];
@@ -78,7 +79,8 @@ class Params {
   const std::string& get(const char* name) {
     auto f = lines.find(name);
     if (f == lines.end()) {
-      std::cout <<  loghead() << "Could not find value for " << name << std::endl;
+      if (!mpi_id)
+	std::cout <<  loghead() << "Could not find value for " << name << std::endl;
       abort();
     }
     return f->second;
@@ -115,7 +117,8 @@ class Params {
     } else if (lcval == "false" || lcval == "no") {
       b = false;
     } else {
-      std::cout << "Invalid value for boolean: " << b << std::endl;
+      if (!mpi_id)
+	std::cout << "Invalid value for boolean: " << b << std::endl;
       assert(0);
     }
   }
@@ -153,7 +156,8 @@ class Params {
 	break;
       T val;
       parse(val,get(buf));
-      std::cout << loghead() << "Set " << buf << " to " << val << std::endl;
+      if (!mpi_id)
+	std::cout << loghead() << "Set " << buf << " to " << val << std::endl;
       v.push_back(val);
     }
   }
@@ -161,7 +165,8 @@ class Params {
   template<class T>
   void get(const char* name, T& f) {
     parse(f,get(name));
-    std::cout << loghead() << "Set " << name << " to " << f << std::endl;
+    if (!mpi_id)
+      std::cout << loghead() << "Set " << name << " to " << f << std::endl;
   }
 
   

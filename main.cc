@@ -11,10 +11,20 @@
 #include <stdlib.h>
 #include <string.h>
 #include <set>
-#include "Params.h"
 #include <omp.h>
+#include <mpi.h>
 
+int mpi_n, mpi_id;
+
+#include "Params.h"
 typedef std::complex<double> ComplexD;
+
+void glb_sum(std::vector<ComplexD>& v) {
+  std::vector<ComplexD> t(v.size());
+  MPI_Allreduce(&v[0], &t[0], 2*v.size(), MPI_DOUBLE, MPI_SUM,
+		MPI_COMM_WORLD);
+  v=t;
+}
 
 inline double dclock() {
   struct timeval tv;
@@ -161,7 +171,8 @@ std::vector<int> getMomParam(Params& p, Cache<N>& ca, std::vector<std::string>& 
   if (f == ca.vintVals.end()) {
     std::vector<int> v;
     std::string sv = p.get(n.c_str());
-    std::cout << p.loghead() << "Set " << n << " to " << sv << std::endl;
+    if (!mpi_id)
+      std::cout << p.loghead() << "Set " << n << " to " << sv << std::endl;
     p.parse(v,sv);
     ca.vintVals[n] = v;
 
@@ -324,6 +335,8 @@ void parse(ComplexD& result, std::string contr, Params& p, Cache<N>& ca, int ite
     } else if (!args[0].compare("LIGHT_LGAMMA_LIGHT")) {
       int mu = getIntParam(p,ca,args,1,iter);
       if (!learn) {
+	std::cout << "Not yet implemented: " << args[0] << std::endl;
+	assert(0);
       }
     } else {
       std::cout << "Unknown command " << args[0] << " in line " << line << std::endl;
@@ -337,12 +350,14 @@ void parse(ComplexD& result, std::string contr, Params& p, Cache<N>& ca, int ite
   double t1=dclock();
 
   if (!learn) {
-    std::cout << "Processing iteration " << iter << " of " << contr << " in " << (t1-t0) << " s" << std::endl;
+    if (!mpi_id)
+      std::cout << "Processing iteration " << iter << " of " << contr << " in " << (t1-t0) << " s" << std::endl;
     result = 0.0;
     for (auto f : factor) {
       result += f;
     }
   } else {
+    //std::cout << "Parsing iteration " << iter << " of " << contr << " in " << (t1-t0) << " s" << std::endl;
     assert(factor.size() == 0);
   }
 
@@ -413,7 +428,10 @@ void run(Params& p,int argc,char* argv[]) {
       assert(_dt[iter] >= 0 && _dt[iter] < NT);
 
       ComplexD r = 0.0;
-      parse(r,cc,p,ca,iter,false);
+
+      if (iter % mpi_n == mpi_id)
+	parse(r,cc,p,ca,iter,false);
+
       assert(!isnan(r.real())); // important to make remaining logic sound
 
       ComplexD& t = f->second[_dt[iter]];
@@ -427,6 +445,9 @@ void run(Params& p,int argc,char* argv[]) {
     for (auto& f : res) {
       char buf[4096]; // bad even if this likely is large enough
       sprintf(buf,"%s/%s",cc.c_str(),f.first.c_str());
+
+      glb_sum(f.second);
+
       co.write_correlator(buf,f.second);
     }
   }
@@ -437,6 +458,10 @@ int main(int argc, char* argv[]) {
 
   int N;
   PADD(p,N);
+
+  MPI_Init (&argc, &argv);
+  MPI_Comm_size (MPI_COMM_WORLD,&mpi_n);
+  MPI_Comm_rank (MPI_COMM_WORLD, &mpi_id);
 
   if (N==60) {
     run<60>(p,argc,argv);
@@ -450,5 +475,6 @@ int main(int argc, char* argv[]) {
     std::cout << "Unknown basis size " << N << " needs to be added at compile-time for efficiency" << std::endl;
   }
 
+  MPI_Finalize();
   return 0;
 }
