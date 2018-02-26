@@ -41,12 +41,13 @@ public:
 
   std::map<std::string,int> intVals;
   std::map<std::string,std::vector<int> > vintVals;
-  std::set<int> keep_t0;
+  std::set<int> keep_t0, keep_t0_lgl;
   std::set<std::string> keep_mom;
   int keep_prec;
 
   std::map< std::string, std::vector< Matrix< N, ComplexD > > > moms;
   std::map< int, std::vector< Matrix< 4*N, ComplexD > > > peramb;
+  std::map< int, std::vector< std::map<int, Matrix< 4*N, ComplexD > > > > lgl;
 
 #define SIDX(n,s) ((n)*4 + (s))
 
@@ -83,14 +84,30 @@ public:
 
   bool fill_gamma(int n,int np,int s,int sp,int t0,int mu,int prec,std::vector<ComplexD>& res) {
 
-    if (!keep_t0.count(t0))
+    if (!keep_t0_lgl.count(t0))
       return false;
 
-    //assert(res.size() == NT);
-    if (mu<3) {
-      //for (int t=0;t<NT;t++) {
-	//gmu(prec)(mu)(t,t0)(n,np)(s,sp) = res[t];
-      //}
+    if (!res.size())
+      return true;
+
+    auto& p=lgl[t0];
+    if (p.size() == 0) {
+      p.resize(res.size());
+
+      // Remark: don't use threading here!  OMP overhead dominates!
+      for (int t=0;t<(int)res.size();t++) {
+	auto& m = p[t][mu];
+	for (int i=0;i<4*N;i++)
+	  for (int j=0;j<4*N;j++)
+	    m(i,j)=NAN;
+      }
+
+    }
+
+    // Remark: don't use threading here!  OMP overhead dominates!
+    for (int t=0;t<(int)res.size();t++) {
+      auto& m = p[t][mu];
+      m(SIDX(n,s),SIDX(np,sp)) = res[t];
     }
 
     return true;
@@ -207,8 +224,9 @@ int getIntParam(Params& p, Cache<N>& ca, std::vector<std::string>& args, int iar
   return f->second;
 }
 
+enum T_FLAG { TF_NONE, TF_IST0_PERAMB, TF_IST0_LGL };
 template<int N>
-int getTimeParam(Params& p, Cache<N>& ca, std::vector<std::string>& args, int iarg, int iter, bool isT0) {
+int getTimeParam(Params& p, Cache<N>& ca, std::vector<std::string>& args, int iarg, int iter, T_FLAG tf) {
   if (args.size() <= iarg) {
     std::cout << "Missing argument " << iarg << " for command " << args[0] << std::endl;
     assert(0);
@@ -223,8 +241,10 @@ int getTimeParam(Params& p, Cache<N>& ca, std::vector<std::string>& args, int ia
     int v;
     p.get(n.c_str(),v);
     ca.intVals[n] = v;
-    if (isT0)
+    if (tf == TF_IST0_PERAMB)
       ca.keep_t0.insert(v);
+    else if (tf == TF_IST0_LGL)
+      ca.keep_t0_lgl.insert(v);
     return v;
   }  
     
@@ -237,7 +257,8 @@ void parse(ComplexD& result, std::string contr, Params& p, Cache<N>& ca, int ite
   char line[2048];
 
   if (learn) {
-    std::cout << "Parsing iteration " << iter << " of " << contr << std::endl;
+    if (!mpi_id)
+      std::cout << "Parsing iteration " << iter << " of " << contr << std::endl;
   }
 
   double t0 = dclock();
@@ -272,25 +293,29 @@ void parse(ComplexD& result, std::string contr, Params& p, Cache<N>& ca, int ite
     auto args = split(std::string(line),' ');
 
     if (!args[0].compare("LIGHT")) {
-      int t = getTimeParam(p,ca,args,1,iter,false);
-      int t0 = getTimeParam(p,ca,args,2,iter,true);
+      int t = getTimeParam(p,ca,args,1,iter,TF_NONE);
+      int t0 = getTimeParam(p,ca,args,2,iter,TF_IST0_PERAMB);
 
       if (!learn) {
+	const auto& p = ca.peramb.find(t0);
+	assert(p != ca.peramb.end());
 #pragma omp parallel
 	{
-	  fast_mult(res,M, ca.peramb[t0][t], tmp);
+	  fast_mult(res,M, p->second[t], tmp);
 	  fast_cp(M,res);
 	}
       }
     } else if (!args[0].compare("LIGHTBAR")) {
-      int t = getTimeParam(p,ca,args,2,iter,false);
-      int t0 = getTimeParam(p,ca,args,1,iter,true);
+      int t = getTimeParam(p,ca,args,2,iter,TF_NONE);
+      int t0 = getTimeParam(p,ca,args,1,iter,TF_IST0_PERAMB);
 
       if (!learn) {
+	const auto& p = ca.peramb.find(t0);
+	assert(p != ca.peramb.end());
 #pragma omp parallel
 	{
 	  fast_spin(res,M,5);
-	  fast_dag(tmp2,ca.peramb[t0][t]);
+	  fast_dag(tmp2,p->second[t]);
 	  fast_mult(M,res, tmp2, tmp);
 	  fast_spin(res,M,5);
 	  fast_cp(M,res);
@@ -311,15 +336,16 @@ void parse(ComplexD& result, std::string contr, Params& p, Cache<N>& ca, int ite
       }
     } else if (!args[0].compare("MOM")) {
       std::vector<int> mom = getMomParam(p,ca,args,1,iter);
-      int t = getTimeParam(p,ca,args,2,iter,false);
+      int t = getTimeParam(p,ca,args,2,iter,TF_NONE);
       if (!learn) {
 	assert(mom.size() == 3);
 	char buf[64];
 	sprintf(buf,"%d_%d_%d",mom[0],mom[1],mom[2]);
-	auto& m=ca.moms[buf];
+	const auto& m=ca.moms.find(buf);
+	assert(m != ca.moms.end());
 #pragma omp parallel
 	{
-	  fast_mult_mode(res,M, m[t], tmp);
+	  fast_mult_mode(res,M, m->second[t], tmp);
 	  fast_cp(M,res);
 	}
       }
@@ -333,10 +359,18 @@ void parse(ComplexD& result, std::string contr, Params& p, Cache<N>& ca, int ite
 	}
       }
     } else if (!args[0].compare("LIGHT_LGAMMA_LIGHT")) {
-      int mu = getIntParam(p,ca,args,1,iter);
+      int t0 = getTimeParam(p,ca,args,1,iter,TF_IST0_LGL);
+      int t = getTimeParam(p,ca,args,2,iter,TF_NONE);
+      int mu = getIntParam(p,ca,args,3,iter);
+      int t1 = getTimeParam(p,ca,args,4,iter,TF_IST0_LGL);
       if (!learn) {
-	std::cout << "Not yet implemented: " << args[0] << std::endl;
-	assert(0);
+	assert(t0 == t1); // only this works so far
+	assert(ca.lgl[t0].size() > t);
+#pragma omp parallel
+	{
+	  fast_mult(res,M, ca.lgl[t0][t][mu], tmp);
+	  fast_cp(M,res);
+	}
       }
     } else {
       std::cout << "Unknown command " << args[0] << " in line " << line << std::endl;
