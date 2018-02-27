@@ -60,6 +60,9 @@ public:
     if (!keep_t0.count(t0))
       return false;
 
+    if (prec != keep_prec)
+      return false;
+
     if (!res.size()) {
       assert(n < N);
       assert(np < N);
@@ -89,6 +92,9 @@ public:
   bool fill_gamma(int n,int np,int s,int sp,int t0,int mu,int prec,std::vector<ComplexD>& res) {
 
     if (!keep_t0_lgl.count(t0))
+      return false;
+
+    if (prec != keep_prec)
       return false;
 
     if (!res.size()) {
@@ -157,8 +163,6 @@ public:
     if (!strncmp(tag,"pera",4)) {
       tag+=11;
       int prec = *tag - '0';
-      if (prec != keep_prec)
-	return false;
       int n,np,s,sp,t0;
       tag+=2;
       assert(sscanf(tag,"n_%d_%d_s_%d_%d_t_%d",&n,&np,&s,&sp,&t0)==5);
@@ -173,8 +177,6 @@ public:
       int mu = *tag - '0';
       tag+=6;
       int prec = *tag - '0';
-      if (prec != keep_prec)
-	return false;
       tag+=2;
       int n,np,s,sp,t0;
       assert(sscanf(tag,"n_%d_%d_s_%d_%d_t_%d",&n,&np,&s,&sp,&t0)==5);
