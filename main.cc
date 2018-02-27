@@ -41,6 +41,7 @@ public:
 
   std::map<std::string,int> intVals;
   std::map<std::string,std::vector<int> > vintVals;
+  std::map<std::string,std::vector<ComplexD> > vcVals;
   std::set<int> keep_t0, keep_t0_lgl;
   std::set<std::string> keep_mom;
   int keep_prec;
@@ -203,6 +204,31 @@ std::vector<int> getMomParam(Params& p, Cache<N>& ca, std::vector<std::string>& 
 }
 
 template<int N>
+std::vector<ComplexD> getVCParam(Params& p, Cache<N>& ca, std::vector<std::string>& args, int iarg, int iter) {
+  if (args.size() <= iarg) {
+    std::cout << "Missing argument " << iarg << " for command " << args[0] << std::endl;
+    assert(0);
+  }
+
+  char suf[32];
+  sprintf(suf,"[%d]",iter);
+  auto n = args[iarg] + suf;
+
+  auto f = ca.vcVals.find(n);
+  if (f == ca.vcVals.end()) {
+    std::vector<ComplexD> v;
+    std::string sv = p.get(n.c_str());
+    if (!mpi_id)
+      std::cout << p.loghead() << "Set " << n << " to " << sv << std::endl;
+    p.parse(v,sv);
+    ca.vcVals[n] = v;
+    return v;
+  }  
+    
+  return f->second;
+}
+
+template<int N>
 int getIntParam(Params& p, Cache<N>& ca, std::vector<std::string>& args, int iarg, int iter) {
   if (args.size() <= iarg) {
     std::cout << "Missing argument " << iarg << " for command " << args[0] << std::endl;
@@ -349,6 +375,14 @@ void parse(ComplexD& result, std::string contr, Params& p, Cache<N>& ca, int ite
 	{
 	  fast_mult_mode(res,M, m->second[t], tmp);
 	  fast_cp(M,res);
+	}
+      }
+    } else if (!args[0].compare("MODEWEIGHT")) {
+      std::vector<ComplexD> weights = getVCParam(p,ca,args,1,iter);
+      if (!learn) {
+#pragma omp parallel
+	{
+	  fast_mult_dmode(M, weights);
 	}
       }
     } else if (!args[0].compare("GAMMA")) {

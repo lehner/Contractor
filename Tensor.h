@@ -406,6 +406,21 @@ void fast_mult_mode(Matrix<N, ComplexD>& A, Matrix<N, ComplexD>& B, Matrix<Nmode
   }
 }
 
+template<int N>
+  void fast_mult_dmode(Matrix<N, ComplexD>& A, std::vector<ComplexD>& v) {
+
+  assert(v.size()*4 == N);
+
+  ComplexD* pA = &A._internal[0];
+#pragma omp for
+  for (int ab=0;ab<N*N;ab++) {
+    int j=ab / N;
+    int i=ab % N;
+    int jn = j / 4;
+    pA[i + N*j] *= v[jn];
+  }
+}
+
 template<int Nt>
 void testFastMatrix() {
 
