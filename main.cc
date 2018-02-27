@@ -60,8 +60,11 @@ public:
     if (!keep_t0.count(t0))
       return false;
 
-    if (!res.size())
+    if (!res.size()) {
+      assert(n < N);
+      assert(np < N);
       return true;
+    }
 
     auto& p=peramb[t0];
     if (p.size() == 0) {
@@ -88,8 +91,11 @@ public:
     if (!keep_t0_lgl.count(t0))
       return false;
 
-    if (!res.size())
+    if (!res.size()) {
+      assert(n < N);
+      assert(np < N);
       return true;
+    }
 
     auto& p=lgl[t0];
     if (p.size() == 0) {
@@ -122,8 +128,11 @@ public:
     if (!keep_mom.count(buf))
       return false;
 
-    if (!res.size())
+    if (!res.size()) {
+      assert(n < N);
+      assert(np < N);
       return true;
+    }
 
     auto& m=moms[buf];
     if (m.size() == 0) {
@@ -148,6 +157,8 @@ public:
     if (!strncmp(tag,"pera",4)) {
       tag+=11;
       int prec = *tag - '0';
+      if (prec != keep_prec)
+	return false;
       int n,np,s,sp,t0;
       tag+=2;
       assert(sscanf(tag,"n_%d_%d_s_%d_%d_t_%d",&n,&np,&s,&sp,&t0)==5);
@@ -162,6 +173,8 @@ public:
       int mu = *tag - '0';
       tag+=6;
       int prec = *tag - '0';
+      if (prec != keep_prec)
+	return false;
       tag+=2;
       int n,np,s,sp,t0;
       assert(sscanf(tag,"n_%d_%d_s_%d_%d_t_%d",&n,&np,&s,&sp,&t0)==5);
