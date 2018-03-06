@@ -197,18 +197,26 @@ std::vector<int> getMomParam(Params& p, Cache<N>& ca, std::vector<std::string>& 
   }
 
   char suf[32];
-  sprintf(suf,"[%d]",iter);
-  auto n = args[iarg] + suf;
+
+  bool isConst = (args[iarg][0] == '[');
+
+  std::string n;
+  if (isConst) {
+    n = args[iarg];
+  } else {
+    sprintf(suf,"[%d]",iter);
+    n = args[iarg] + suf;
+  }
 
   auto f = ca.vintVals.find(n);
   if (f == ca.vintVals.end()) {
     std::vector<int> v;
-    std::string sv = p.get(n.c_str());
+    std::string sv = isConst ? n : p.get(n.c_str());
     if (!mpi_id)
       std::cout << p.loghead() << "Set " << n << " to " << sv << std::endl;
     p.parse(v,sv);
     ca.vintVals[n] = v;
-
+      
     assert(v.size() == 3);
     sprintf(suf,"%d_%d_%d",v[0],v[1],v[2]);
     ca.keep_mom.insert(suf);
@@ -225,14 +233,21 @@ std::vector<ComplexD> getVCParam(Params& p, Cache<N>& ca, std::vector<std::strin
     assert(0);
   }
 
+  bool isConst = (args[iarg][0] == '[');
+
+  std::string n;
   char suf[32];
-  sprintf(suf,"[%d]",iter);
-  auto n = args[iarg] + suf;
+  if (isConst) {
+    n = args[iarg];
+  } else {
+    sprintf(suf,"[%d]",iter);
+    n = args[iarg] + suf;
+  }
 
   auto f = ca.vcVals.find(n);
   if (f == ca.vcVals.end()) {
     std::vector<ComplexD> v;
-    std::string sv = p.get(n.c_str());
+    std::string sv = isConst ? n : p.get(n.c_str());
     if (!mpi_id)
       std::cout << p.loghead() << "Set " << n << " to " << sv << std::endl;
     p.parse(v,sv);
@@ -250,14 +265,26 @@ int getIntParam(Params& p, Cache<N>& ca, std::vector<std::string>& args, int iar
     assert(0);
   }
 
+  bool isConst = (args[iarg][0] >= '0' && args[iarg][0] <= '9');
+
   char suf[32];
-  sprintf(suf,"[%d]",iter);
-  auto n = args[iarg] + suf;
+  std::string n;
+
+  if (isConst) {
+    n = args[iarg];
+  } else {
+    sprintf(suf,"[%d]",iter);
+    n = args[iarg] + suf;
+  }
 
   auto f = ca.intVals.find(n);
   if (f == ca.intVals.end()) {
     int v;
-    p.get(n.c_str(),v);
+    if (isConst) {
+      v = atoi(n.c_str());
+    } else {
+      p.get(n.c_str(),v);
+    }
     ca.intVals[n] = v;
     return v;
   }  
