@@ -211,7 +211,7 @@ std::vector<int> getMomParam(Params& p, Cache<N>& ca, std::vector<std::string>& 
   auto f = ca.vintVals.find(n);
   if (f == ca.vintVals.end()) {
     std::vector<int> v;
-    std::string sv = isConst ? n : p.get(n.c_str());
+    std::string sv = isConst ? n.substr(1) : p.get(n.c_str());
     if (!mpi_id)
       std::cout << p.loghead() << "Set " << n << " to " << sv << std::endl;
     p.parse(v,sv);
@@ -247,7 +247,7 @@ std::vector<ComplexD> getVCParam(Params& p, Cache<N>& ca, std::vector<std::strin
   auto f = ca.vcVals.find(n);
   if (f == ca.vcVals.end()) {
     std::vector<ComplexD> v;
-    std::string sv = isConst ? n : p.get(n.c_str());
+    std::string sv = isConst ? n.substr(1) : p.get(n.c_str());
     if (!mpi_id)
       std::cout << p.loghead() << "Set " << n << " to " << sv << std::endl;
     p.parse(v,sv);
