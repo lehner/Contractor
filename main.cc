@@ -41,6 +41,7 @@ public:
 
   std::map<std::string,int> intVals;
   std::map<std::string,std::vector<int> > vintVals;
+  std::map<std::string,double> realVals;
   std::map<std::string,std::vector<ComplexD> > vcVals;
   std::set<int> keep_t0, keep_t0_lgl;
   std::set<std::string> keep_mom;
@@ -292,6 +293,40 @@ int getIntParam(Params& p, Cache<N>& ca, std::vector<std::string>& args, int iar
   return f->second;
 }
 
+template<int N>
+double getRealParam(Params& p, Cache<N>& ca, std::vector<std::string>& args, int iarg, int iter) {
+  if (args.size() <= iarg) {
+    std::cout << "Missing argument " << iarg << " for command " << args[0] << std::endl;
+    assert(0);
+  }
+
+  bool isConst = (args[iarg][0] >= '0' && args[iarg][0] <= '9') || (args[iarg][0] == '-');
+
+  char suf[32];
+  std::string n;
+
+  if (isConst) {
+    n = args[iarg];
+  } else {
+    sprintf(suf,"[%d]",iter);
+    n = args[iarg] + suf;
+  }
+
+  auto f = ca.realVals.find(n);
+  if (f == ca.realVals.end()) {
+    double v;
+    if (isConst) {
+      v = atof(n.c_str());
+    } else {
+      p.get(n.c_str(),v);
+    }
+    ca.realVals[n] = v;
+    return v;
+  }  
+    
+  return f->second;
+}
+
 enum T_FLAG { TF_NONE, TF_IST0_PERAMB, TF_IST0_LGL };
 template<int N>
 int getTimeParam(Params& p, Cache<N>& ca, std::vector<std::string>& args, int iarg, int iter, T_FLAG tf) {
@@ -422,6 +457,17 @@ void parse(ComplexD& result, std::string contr, Params& p, Cache<N>& ca, int ite
     } else if (!args[0].compare("MODEWEIGHT")) {
       std::vector<ComplexD> weights = getVCParam(p,ca,args,1,iter);
       if (!learn) {
+#pragma omp parallel
+	{
+	  fast_mult_dmode(M, weights);
+	}
+      }
+    } else if (!args[0].compare("MODECUT")) {
+      double lambda = getRealParam(p,ca,args,1,iter);
+      if (!learn) {
+	std::vector<ComplexD> weights(N);
+	for (int i=0;i<N;i++)
+	  weights[i] = ((double)i < (double)N*lambda) ? 1.0 : 0.0;
 #pragma omp parallel
 	{
 	  fast_mult_dmode(M, weights);
@@ -566,7 +612,7 @@ void run(Params& p,int argc,char* argv[]) {
 
     for (auto& f : res) {
       char buf[4096]; // bad even if this likely is large enough
-      sprintf(buf,"%s/%s",cc.c_str(),f.first.c_str());
+      sprintf(buf,"%s",f.first.c_str());
 
       glb_sum(f.second);
 
