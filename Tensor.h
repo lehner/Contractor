@@ -368,7 +368,7 @@ void fast_cp(Matrix<N, ComplexD>& A, Matrix<N, ComplexD>& B) {
 }
 
 template<int N>
-void fast_mult(Matrix<N, ComplexD>& A, Matrix<N, ComplexD>& B, Matrix<N, ComplexD>& C, Matrix<N, ComplexD>& BT) {
+void fast_mult_orig(Matrix<N, ComplexD>& A, Matrix<N, ComplexD>& B, Matrix<N, ComplexD>& C, Matrix<N, ComplexD>& BT) {
   ComplexD* pA = &A._internal[0];
   fast_trans(BT,B);
   ComplexD* pBT = &BT._internal[0];
@@ -383,6 +383,19 @@ void fast_mult(Matrix<N, ComplexD>& A, Matrix<N, ComplexD>& B, Matrix<N, Complex
     pA[i + N*j] = r;
   }
 }
+
+template<int N>
+void fast_mult(Matrix<N, ComplexD>& A, Matrix<N, ComplexD>& B, Matrix<N, ComplexD>& C, Matrix<N, ComplexD>& BT) {
+  ComplexD* pC = &A._internal[0];
+  ComplexD* pA = &B._internal[0];
+  ComplexD* pB = &C._internal[0];
+  ComplexD beta = 0.0;
+  ComplexD alpha = 1.0;
+  int n=N,m=N,k=N;
+  cblas_zgemm(CblasColMajor, CblasNoTrans, CblasNoTrans, 
+	      m, n, k, &alpha, pA, k, pB, n, &beta, pC, n);
+}
+
 
 template<int N, int Nmode>
 void fast_mult_mode(Matrix<N, ComplexD>& A, Matrix<N, ComplexD>& B, Matrix<Nmode, ComplexD>& C, Matrix<N, ComplexD>& BT) {
@@ -404,6 +417,7 @@ void fast_mult_mode(Matrix<N, ComplexD>& A, Matrix<N, ComplexD>& B, Matrix<Nmode
       r += pBT[ln*4 + js + N*i] * pC[ln + Nmode*jn];
     pA[i + N*j] = r;
   }
+
 }
 
 template<int N>
@@ -441,6 +455,10 @@ void testFastMatrix() {
     double ta,tb;
 
     for (int iter=0;iter<10;iter++) {
+      ta=dclock();
+      fast_mult(A,B,C,_BT_);
+      tb=dclock();
+#if 0
 #pragma omp parallel
     {
 #pragma omp single
@@ -449,6 +467,7 @@ void testFastMatrix() {
       ta=dclock();
      }
 
+     //fast_mult_orig(A,B,C,_BT_);
      fast_mult(A,B,C,_BT_);
 
 #pragma omp single
@@ -456,6 +475,7 @@ void testFastMatrix() {
       tb=dclock();
      }
     }
+#endif
     double flopsComplexAdd = 2;
     double flopsComplexMul = 6;
     double flops = pow(Nt,3.0)*(flopsComplexMul + flopsComplexAdd);

@@ -13,6 +13,7 @@
 #include <set>
 #include <omp.h>
 #include <mpi.h>
+#include <mkl.h>
 
 int mpi_n, mpi_id;
 
@@ -34,6 +35,21 @@ inline double dclock() {
 
 #include "Correlators.h"
 #include "Tensor.h"
+
+class ValueCache {
+public:
+  std::map<std::string,ComplexD> val;
+  ValueCache() {
+  }
+  ComplexD get(const std::string& n) {
+    const auto& i = val.find(n);
+    assert(i!=val.cend());
+    return i->second;
+  }
+  void put(const std::string& n, ComplexD v) {
+    val[n] = v;
+  }
+};
 
 template<int N>
 class Cache {
@@ -107,21 +123,23 @@ public:
     auto& p=lgl[t0];
     if (p.size() == 0) {
       p.resize(res.size());
-
-      // Remark: don't use threading here!  OMP overhead dominates!
-      for (int t=0;t<(int)res.size();t++) {
-	auto& m = p[t][mu];
-	for (int i=0;i<4*N;i++)
-	  for (int j=0;j<4*N;j++)
-	    m(i,j)=NAN;
-      }
-
     }
 
     // Remark: don't use threading here!  OMP overhead dominates!
     for (int t=0;t<(int)res.size();t++) {
-      auto& m = p[t][mu];
-      m(SIDX(n,s),SIDX(np,sp)) = res[t];
+      auto mf = p[t].find(mu);
+      if (mf == p[t].end()) {
+	auto& m = p[t][mu];
+
+	for (int i=0;i<4*N;i++)
+	  for (int j=0;j<4*N;j++)
+	    m(i,j)=NAN;
+
+	mf = p[t].find(mu);
+	assert(mf != p[t].end());
+      }
+
+      mf->second(SIDX(n,s),SIDX(np,sp)) = res[t];
     }
 
     return true;
@@ -355,6 +373,24 @@ int getTimeParam(Params& p, Cache<N>& ca, std::vector<std::string>& args, int ia
   return f->second;
 }
 
+class Perf {
+public:
+  struct _pi_ { double time; int N; _pi_() : time(0), N(0) {} };
+  std::map<std::string,_pi_> stat;
+  double t0;
+  void begin(std::string a) {
+    t0=dclock();
+  }
+  void end(std::string a) {
+    auto&s=stat[a]; s.time += dclock()-t0; s.N++;
+  }
+  void print() {
+    for (auto s : stat)
+      std::cout << "Performance " << s.first << " took " << s.second.time << " s over "
+		<< s.second.N << " iterations at " << s.second.time / s.second.N << " s/iter" << std::endl; 
+  }
+};
+
 template<int N>
 void parse(ComplexD& result, std::string contr, Params& p, Cache<N>& ca, int iter, bool learn) {
 
@@ -370,6 +406,7 @@ void parse(ComplexD& result, std::string contr, Params& p, Cache<N>& ca, int ite
   FILE* f = fopen(contr.c_str(),"rt");
   assert(f);
 
+
   //
   // Logic:
   //
@@ -380,7 +417,10 @@ void parse(ComplexD& result, std::string contr, Params& p, Cache<N>& ca, int ite
 
   std::vector<ComplexD> factor;
   Matrix< 4*N, ComplexD > M, tmp, tmp2, res;
+  std::vector<std::string> ttr;
+  ValueCache vc;
 
+  Perf perf;
   while (!feof(f)) {
     if (!fgets(line,sizeof(line),f))
       break;
@@ -396,6 +436,9 @@ void parse(ComplexD& result, std::string contr, Params& p, Cache<N>& ca, int ite
 
     auto args = split(std::string(line),' ');
 
+    if (!learn)
+      perf.begin(args[0]);
+
     if (!args[0].compare("LIGHT")) {
       int t = getTimeParam(p,ca,args,1,iter,TF_NONE);
       int t0 = getTimeParam(p,ca,args,2,iter,TF_IST0_PERAMB);
@@ -405,11 +448,8 @@ void parse(ComplexD& result, std::string contr, Params& p, Cache<N>& ca, int ite
 	if (p == ca.peramb.end())
 	  std::cout << "Did not find " << t0 << std::endl;
 	assert(p != ca.peramb.end());
-#pragma omp parallel
-	{
-	  fast_mult(res,M, p->second[t], tmp);
-	  fast_cp(M,res);
-	}
+	fast_mult(res,M, p->second[t], tmp);
+	fast_cp(M,res);
       }
     } else if (!args[0].compare("LIGHTBAR")) {
       int t0 = getTimeParam(p,ca,args,1,iter,TF_IST0_PERAMB);
@@ -421,10 +461,13 @@ void parse(ComplexD& result, std::string contr, Params& p, Cache<N>& ca, int ite
 	{
 	  fast_spin(res,M,5);
 	  fast_dag(tmp2,p->second[t]);
-	  fast_mult(M,res, tmp2, tmp);
-	  fast_spin(res,M,5);
-	  fast_cp(M,res);
 	}
+	fast_mult(M,res, tmp2, tmp);
+#pragma omp parallel
+	{
+	  fast_spin(res,M,5);
+	}
+	fast_cp(M,res);
       }
     } else if (!args[0].compare("FACTOR")) {
       if (!learn) {
@@ -434,6 +477,24 @@ void parse(ComplexD& result, std::string contr, Params& p, Cache<N>& ca, int ite
     } else if (!args[0].compare("BEGINTRACE")) {
       if (!learn)
 	identity_mat(M);
+    } else if (!args[0].compare("BEGINDEFINE")) {
+      if (!learn) {
+	factor.push_back( 1.0 );
+      }
+    } else if (!args[0].compare("ENDDEFINE")) {
+      assert(args.size() == 2);
+      if (!learn) {
+	assert(factor.size());
+	ComplexD val = factor[factor.size()-1];
+	vc.put(args[1],val);
+	factor.pop_back();
+      }
+    } else if (!args[0].compare("EVAL")) {
+      assert(args.size() == 2);
+      if (!learn) {
+	assert(factor.size());
+	factor[factor.size()-1] *= vc.get(args[1]);
+      }
     } else if (!args[0].compare("ENDTRACE")) {
       if (!learn) {
 	assert(factor.size());
@@ -449,10 +510,10 @@ void parse(ComplexD& result, std::string contr, Params& p, Cache<N>& ca, int ite
 	const auto& m=ca.moms.find(buf);
 	assert(m != ca.moms.end());
 #pragma omp parallel
-	{
+ 	{
 	  fast_mult_mode(res,M, m->second[t], tmp);
-	  fast_cp(M,res);
 	}
+	fast_cp(M,res);
       }
     } else if (!args[0].compare("MODEWEIGHT")) {
       std::vector<ComplexD> weights = getVCParam(p,ca,args,1,iter);
@@ -479,8 +540,8 @@ void parse(ComplexD& result, std::string contr, Params& p, Cache<N>& ca, int ite
 #pragma omp parallel
 	{
 	  fast_spin(res,M,mu);
-	  fast_cp(M,res);
 	}
+	fast_cp(M,res);
       }
     } else if (!args[0].compare("LIGHT_LGAMMA_LIGHT")) {
       int t0 = getTimeParam(p,ca,args,1,iter,TF_IST0_LGL);
@@ -490,17 +551,15 @@ void parse(ComplexD& result, std::string contr, Params& p, Cache<N>& ca, int ite
       if (!learn) {
 	assert(t0 == t1); // only this works so far
 	assert(ca.lgl[t0].size() > t);
-#pragma omp parallel
-	{
-	  fast_mult(res,M, ca.lgl[t0][t][mu], tmp);
-	  fast_cp(M,res);
-	}
+	fast_mult(res,M, ca.lgl[t0][t][mu], tmp);
+	fast_cp(M,res);
       }
     } else {
       std::cout << "Unknown command " << args[0] << " in line " << line << std::endl;
       assert(0);
     }
-
+    if (!learn)
+      perf.end(args[0]);
   }
 
   fclose(f);
@@ -508,8 +567,10 @@ void parse(ComplexD& result, std::string contr, Params& p, Cache<N>& ca, int ite
   double t1=dclock();
 
   if (!learn) {
-    if (!mpi_id)
+    if (!mpi_id) {
       std::cout << "Processing iteration " << iter << " of " << contr << " in " << (t1-t0) << " s" << std::endl;
+      perf.print();
+    }
     result = 0.0;
     for (auto f : factor) {
       result += f;
@@ -528,21 +589,21 @@ void run(Params& p,int argc,char* argv[]) {
 
   if (argc >= 2 && !strcmp(argv[1],"--performance"))
     testFastMatrix<4*N>();
-
+  
   std::vector<std::string> contractions;
   std::vector<std::string> input;
   PADD(p,contractions);
   PADD(p,input);
-
+  
   int precision;
   PADD(p,precision);
   ca.keep_prec = precision;
-
+  
   // Define output correlator as well
   std::string output;
   PADD(p,output);
   CorrelatorsOutput co(output);
-
+  
   // Set output vector size
   int NT;
   std::vector< std::vector<int> > _dt;
@@ -556,7 +617,7 @@ void run(Params& p,int argc,char* argv[]) {
   int Niter = _dt.size();
   assert(_tag.size() == Niter);
   assert(_scale.size() == Niter);
-
+  
   // parse what we need
   for (int iter=0;iter<Niter;iter++) {
     ComplexD res = 0.0;
@@ -580,6 +641,11 @@ void run(Params& p,int argc,char* argv[]) {
 
       if (iter % mpi_n == mpi_id)
 	parse(r,cc,p,ca,iter,false);
+
+      if (isnan(r.real())) {
+	printf("nan | %d\n",iter);
+	return;
+      }
 
       assert(!isnan(r.real())); // important to make remaining logic sound
 
