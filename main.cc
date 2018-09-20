@@ -36,18 +36,22 @@ inline double dclock() {
 #include "Correlators.h"
 #include "Tensor.h"
 
+template<typename T>
 class ValueCache {
 public:
-  std::map<std::string,ComplexD> val;
+  std::map<std::string,T> val;
   ValueCache() {
   }
-  ComplexD get(const std::string& n) {
+  T& get(const std::string& n) {
     const auto& i = val.find(n);
     assert(i!=val.cend());
     return i->second;
   }
-  void put(const std::string& n, ComplexD v) {
+  void put(const std::string& n, const T& v) {
     val[n] = v;
+  }
+  void clear() {
+    val.clear();
   }
 };
 
@@ -392,7 +396,8 @@ public:
 };
 
 template<int N>
-void parse(ComplexD& result, std::string contr, Params& p, Cache<N>& ca, int iter, bool learn) {
+void parse(ComplexD& result, std::string contr, Params& p, Cache<N>& ca, int iter, bool learn, ValueCache<ComplexD>& vc,  
+	   ValueCache< Matrix< 4*N, ComplexD > >& mc) {
 
   char line[2048];
 
@@ -406,7 +411,6 @@ void parse(ComplexD& result, std::string contr, Params& p, Cache<N>& ca, int ite
   FILE* f = fopen(contr.c_str(),"rt");
   assert(f);
 
-
   //
   // Logic:
   //
@@ -418,7 +422,6 @@ void parse(ComplexD& result, std::string contr, Params& p, Cache<N>& ca, int ite
   std::vector<ComplexD> factor;
   Matrix< 4*N, ComplexD > M, tmp, tmp2, res;
   std::vector<std::string> ttr;
-  ValueCache vc;
 
   Perf perf;
   while (!feof(f)) {
@@ -489,11 +492,26 @@ void parse(ComplexD& result, std::string contr, Params& p, Cache<N>& ca, int ite
 	vc.put(args[1],val);
 	factor.pop_back();
       }
+    } else if (!args[0].compare("BEGINMDEFINE")) {
+      if (!learn) {
+	identity_mat(M);
+      }
+    } else if (!args[0].compare("ENDMDEFINE")) {
+      assert(args.size() == 2);
+      if (!learn) {
+	mc.put(args[1],M);
+      }
     } else if (!args[0].compare("EVAL")) {
       assert(args.size() == 2);
       if (!learn) {
 	assert(factor.size());
 	factor[factor.size()-1] *= vc.get(args[1]);
+      }
+    } else if (!args[0].compare("EVALM")) {
+      assert(args.size() == 2);
+      if (!learn) {
+	fast_mult(res,M, mc.get(args[1]), tmp);
+	fast_cp(M,res);
       }
     } else if (!args[0].compare("ENDTRACE")) {
       if (!learn) {
@@ -590,9 +608,19 @@ void run(Params& p,int argc,char* argv[]) {
   if (argc >= 2 && !strcmp(argv[1],"--performance"))
     testFastMatrix<4*N>();
   
-  std::vector<std::string> contractions;
+  struct {
+    std::vector<std::string> file;
+    std::vector<std::string> tag;
+  } contraction;
+
   std::vector<std::string> input;
-  PADD(p,contractions);
+  PADD(p,contraction.file);
+  PADD(p,contraction.tag);
+
+  assert(contraction.file.size() == contraction.tag.size());
+
+  std::string header;
+  PADD(p,header);
   PADD(p,input);
   
   int precision;
@@ -608,21 +636,28 @@ void run(Params& p,int argc,char* argv[]) {
   int NT;
   std::vector< std::vector<int> > _dt;
   std::vector< std::vector<std::string> > _tag;
+  std::vector< std::vector<std::string> > _contractions;
   std::vector< std::vector<double> > _scale;
   PADD(p,NT);
   PADD(p,_dt);
   PADD(p,_tag);
+  PADD(p,_contractions);
   PADD(p,_scale);
   
   int Niter = _dt.size();
   assert(_tag.size() == Niter);
   assert(_scale.size() == Niter);
+  assert(_contractions.size() == Niter);
   
+  ValueCache<ComplexD> vc;
+  ValueCache< Matrix< 4*N, ComplexD > > mc;
+
   // parse what we need
   for (int iter=0;iter<Niter;iter++) {
     ComplexD res = 0.0;
-    for (auto& cc : contractions) {
-      parse(res,cc,p,ca,iter,true);
+    parse(res,header,p,ca,iter,true,vc,mc);
+    for (auto& cc : contraction.file) {
+      parse(res,cc,p,ca,iter,true,vc,mc);
     }
   }
 
@@ -632,58 +667,71 @@ void run(Params& p,int argc,char* argv[]) {
   }
 
   // Compute
-  for (auto& cc : contractions) {
-    std::map<std::string, std::vector<ComplexD> > res;
+  std::map<std::string, std::vector<ComplexD> > res;
 
-    for (int iter=0;iter<Niter;iter++) {
-
-      ComplexD r = 0.0;
-
-      if (iter % mpi_n == mpi_id)
-	parse(r,cc,p,ca,iter,false);
-
-      if (isnan(r.real())) {
-	printf("nan | %d\n",iter);
-	return;
-      }
-
-      assert(!isnan(r.real())); // important to make remaining logic sound
+  for (int iter=0;iter<Niter;iter++) {
 
       assert(_dt[iter].size() == _scale[iter].size());
+      assert(_dt[iter].size() == _contractions[iter].size());
       assert(_dt[iter].size() == _tag[iter].size());
 
-      // do as many cuts as we want
-      for (int jj=0;jj<_dt[iter].size();jj++) {
+      ComplexD r = 0.0;
+      std::map<std::string,ComplexD> rm;
 
-	auto f = res.find(_tag[iter][jj]);
-	if (f == res.end()) {
-	  std::vector<ComplexD> r0(NT);
-	  for (int i=0;i<NT;i++)
-	    r0[i] = NAN;
-	  res[_tag[iter][jj]] = r0;
+      if (iter % mpi_n == mpi_id) {
+	vc.clear();
+	mc.clear();
+
+	parse(r,header,p,ca,iter,false,vc,mc);
+	for (int jj=0;jj<(int)contraction.file.size();jj++) {
+	  auto& cc = contraction.file[jj];
+	  auto& tt = contraction.tag[jj];
+	  auto& rmm = rm[tt];
+
+	  rmm = 0.0;
+	  parse(rmm,cc,p,ca,iter,false,vc,mc);
+
+	  if (isnan(rmm.real())) {
+	    printf("nan | %d\n",iter);
+	    return;
+	  }
+
+	  assert(!isnan(rmm.real())); // important to make remaining logic sound
 	}
-	f = res.find(_tag[iter][jj]);
 
-	assert(_dt[iter][jj] >= 0 && _dt[iter][jj] < NT);
+	// do as many cuts as we want
+	for (int jj=0;jj<_dt[iter].size();jj++) {
+
+	  std::string tt = _contractions[iter][jj] + "/" + _tag[iter][jj];
+	  auto f = res.find(tt);
+	  if (f == res.end()) {
+	    std::vector<ComplexD> r0(NT);
+	    for (int i=0;i<NT;i++)
+	      r0[i] = NAN;
+	    res[_tag[iter][jj]] = r0;
+	  }
+	  f = res.find(tt);
+
+	  assert(_dt[iter][jj] >= 0 && _dt[iter][jj] < NT);
 	
-	ComplexD& t = f->second[_dt[iter][jj]];
-	ComplexD v = _scale[iter][jj] * r;
-	if (isnan(t.real()))
-	  t=v;
-	else
-	  t+=v;
+	  ComplexD& t = f->second[_dt[iter][jj]];
+	  ComplexD v = _scale[iter][jj] * rm[_contractions[iter][jj]];
+	  if (isnan(t.real()))
+	    t=v;
+	  else
+	    t+=v;
 
+	}
       }
-    }
+  }
 
-    for (auto& f : res) {
-      char buf[4096]; // bad even if this likely is large enough
-      sprintf(buf,"%s",f.first.c_str());
-
-      glb_sum(f.second);
-
-      co.write_correlator(buf,f.second);
-    }
+  for (auto& f : res) {
+    char buf[4096]; // bad even if this likely is large enough
+    sprintf(buf,"%s",f.first.c_str());
+    
+    glb_sum(f.second);
+    
+    co.write_correlator(buf,f.second);
   }
 }
 
