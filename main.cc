@@ -459,6 +459,17 @@ void parse(ComplexD& result, std::string contr, Params& p, Cache<N>& ca, int ite
       int t = getTimeParam(p,ca,args,2,iter,TF_NONE);
       if (!learn) {
 	const auto& p = ca.peramb.find(t0);
+	if (p == ca.peramb.end()) {
+	  printf("-----\n");
+	  printf("t0 = %d\n",t0);
+	  printf("iter = %d\n",iter);
+	  printf("contr = %s\n",contr.c_str());
+	  for (auto& x : ca.peramb) {
+	    printf("Has %d\n",x.first);
+	  }
+	  printf("-----\n");
+	  fflush(stdout);
+	}
 	assert(p != ca.peramb.end());
 #pragma omp parallel
 	{
@@ -600,6 +611,13 @@ void parse(ComplexD& result, std::string contr, Params& p, Cache<N>& ca, int ite
 
 }
 
+bool has(std::vector<std::string>& a, std::string& c) {
+  for (auto& x : a)
+    if (!x.compare(c))
+      return true;
+  return false;
+}
+
 template<int N>
 void run(Params& p,int argc,char* argv[]) {
   Correlators c;
@@ -619,8 +637,6 @@ void run(Params& p,int argc,char* argv[]) {
 
   assert(contraction.file.size() == contraction.tag.size());
 
-  std::string header;
-  PADD(p,header);
   PADD(p,input);
   
   int precision;
@@ -638,16 +654,19 @@ void run(Params& p,int argc,char* argv[]) {
   std::vector< std::vector<std::string> > _tag;
   std::vector< std::vector<std::string> > _contractions;
   std::vector< std::vector<double> > _scale;
+  std::vector< std::string > _header;
   PADD(p,NT);
   PADD(p,_dt);
   PADD(p,_tag);
   PADD(p,_contractions);
   PADD(p,_scale);
-  
+  PADD(p,_header);
+
   int Niter = _dt.size();
   assert(_tag.size() == Niter);
   assert(_scale.size() == Niter);
   assert(_contractions.size() == Niter);
+  assert(_header.size() == Niter);
   
   ValueCache<ComplexD> vc;
   ValueCache< Matrix< 4*N, ComplexD > > mc;
@@ -655,9 +674,17 @@ void run(Params& p,int argc,char* argv[]) {
   // parse what we need
   for (int iter=0;iter<Niter;iter++) {
     ComplexD res = 0.0;
-    parse(res,header,p,ca,iter,true,vc,mc);
-    for (auto& cc : contraction.file) {
-      parse(res,cc,p,ca,iter,true,vc,mc);
+
+    if (iter % mpi_n == mpi_id) {
+      if (_header[iter].size())
+	parse(res,_header[iter],p,ca,iter,true,vc,mc);
+      for (int jj=0;jj<(int)contraction.file.size();jj++) {
+	auto& cc = contraction.file[jj];
+	auto& tt = contraction.tag[jj];
+	if (has(_contractions[iter],tt)) {
+	  parse(res,cc,p,ca,iter,true,vc,mc);
+	}
+      }
     }
   }
 
@@ -675,6 +702,21 @@ void run(Params& p,int argc,char* argv[]) {
       assert(_dt[iter].size() == _contractions[iter].size());
       assert(_dt[iter].size() == _tag[iter].size());
 
+      // create
+      for (int jj=0;jj<_dt[iter].size();jj++) {
+	std::string tt = _contractions[iter][jj] + "/" + _tag[iter][jj];
+	auto f = res.find(tt);
+	if (f == res.end()) {
+	  std::vector<ComplexD> r0(NT);
+	  for (int i=0;i<NT;i++)
+	    r0[i] = NAN;
+	  res[tt] = r0;
+	} else {
+	  ComplexD& t = f->second[_dt[iter][jj]];	  
+	  t=0.0;
+	}
+      }
+
       ComplexD r = 0.0;
       std::map<std::string,ComplexD> rm;
 
@@ -682,21 +724,17 @@ void run(Params& p,int argc,char* argv[]) {
 	vc.clear();
 	mc.clear();
 
-	parse(r,header,p,ca,iter,false,vc,mc);
+	if (_header[iter].size())
+	  parse(r,_header[iter],p,ca,iter,false,vc,mc);
 	for (int jj=0;jj<(int)contraction.file.size();jj++) {
 	  auto& cc = contraction.file[jj];
 	  auto& tt = contraction.tag[jj];
 	  auto& rmm = rm[tt];
 
-	  rmm = 0.0;
-	  parse(rmm,cc,p,ca,iter,false,vc,mc);
-
-	  if (isnan(rmm.real())) {
-	    printf("nan | %d\n",iter);
-	    return;
+	  if (has(_contractions[iter],tt)) {
+	    rmm = 0.0;
+	    parse(rmm,cc,p,ca,iter,false,vc,mc);
 	  }
-
-	  assert(!isnan(rmm.real())); // important to make remaining logic sound
 	}
 
 	// do as many cuts as we want
@@ -704,22 +742,14 @@ void run(Params& p,int argc,char* argv[]) {
 
 	  std::string tt = _contractions[iter][jj] + "/" + _tag[iter][jj];
 	  auto f = res.find(tt);
-	  if (f == res.end()) {
-	    std::vector<ComplexD> r0(NT);
-	    for (int i=0;i<NT;i++)
-	      r0[i] = NAN;
-	    res[_tag[iter][jj]] = r0;
-	  }
+	  assert(f != res.end());
 	  f = res.find(tt);
 
 	  assert(_dt[iter][jj] >= 0 && _dt[iter][jj] < NT);
 	
 	  ComplexD& t = f->second[_dt[iter][jj]];
 	  ComplexD v = _scale[iter][jj] * rm[_contractions[iter][jj]];
-	  if (isnan(t.real()))
-	    t=v;
-	  else
-	    t+=v;
+	  t+=v;
 
 	}
       }
