@@ -693,7 +693,7 @@ void run(Params& p,int argc,char* argv[]) {
     c.load(i,ca);
   }
 
-  // Compute
+  // Create
   std::map<std::string, std::vector<ComplexD> > res;
 
   for (int iter=0;iter<Niter;iter++) {
@@ -702,20 +702,24 @@ void run(Params& p,int argc,char* argv[]) {
       assert(_dt[iter].size() == _contractions[iter].size());
       assert(_dt[iter].size() == _tag[iter].size());
 
-      // create
       for (int jj=0;jj<_dt[iter].size();jj++) {
-	std::string tt = _contractions[iter][jj] + "/" + _tag[iter][jj];
+	std::string tt = _tag[iter][jj];
 	auto f = res.find(tt);
 	if (f == res.end()) {
 	  std::vector<ComplexD> r0(NT);
 	  for (int i=0;i<NT;i++)
 	    r0[i] = NAN;
 	  res[tt] = r0;
-	} else {
-	  ComplexD& t = f->second[_dt[iter][jj]];	  
-	  t=0.0;
 	}
+
+	f = res.find(tt);
+	ComplexD& t = f->second[_dt[iter][jj]];	  
+	t=0.0;
       }
+  }
+
+  // Compute
+  for (int iter=0;iter<Niter;iter++) {
 
       ComplexD r = 0.0;
       std::map<std::string,ComplexD> rm;
@@ -740,10 +744,9 @@ void run(Params& p,int argc,char* argv[]) {
 	// do as many cuts as we want
 	for (int jj=0;jj<_dt[iter].size();jj++) {
 
-	  std::string tt = _contractions[iter][jj] + "/" + _tag[iter][jj];
+	  std::string tt = _tag[iter][jj];
 	  auto f = res.find(tt);
 	  assert(f != res.end());
-	  f = res.find(tt);
 
 	  assert(_dt[iter][jj] >= 0 && _dt[iter][jj] < NT);
 	

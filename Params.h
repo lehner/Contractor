@@ -50,9 +50,10 @@ class Params {
     if (!mpi_id)
       std::cout <<  "Opening parameters " << fn << std::endl;
     assert(f);
+    size_t sz = 1024*1024;
+    char* buf = new char[sz];
     while (!feof(f)) {
-      char buf[4096];
-      if (fgets(buf,sizeof(buf),f)) {
+      if (fgets(buf,sz,f)) {
 	if (buf[0] != '#' && buf[0] != '\r' && buf[0] != '\n') {
 	  char* sep = strchr(buf,'=');
 	  assert(sep);
@@ -61,6 +62,7 @@ class Params {
 	}
       }
     }      
+    delete[] buf;
     fclose(f);
   }
 
