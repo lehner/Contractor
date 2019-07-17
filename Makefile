@@ -1,10 +1,10 @@
 SRCS = $(wildcard *.cc)
 
-PROGS = $(patsubst main%.cc,exe-test%,$(SRCS))
+PROGS = $(patsubst main%.cc,exe%,$(SRCS))
 
 all: $(PROGS)
 
-exe-test: main.cc
+exe: main.cc
 	mpiicpc -O3 -mkl -xmic-avx512 -fopenmp -std=c++11 -o $@ -lz $<
 
 #

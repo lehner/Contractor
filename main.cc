@@ -36,6 +36,11 @@ inline double dclock() {
 #include "Correlators.h"
 #include "Tensor.h"
 
+struct {
+  std::string file;
+  int iter;
+} debug;
+
 template<typename T>
 class ValueCache {
 public:
@@ -44,6 +49,10 @@ public:
   }
   T& get(const std::string& n) {
     const auto& i = val.find(n);
+    if (i==val.cend()) {
+      fprintf(stderr,"Error: in %s iter %d missing value for %s\n",
+	      debug.file.c_str(),debug.iter,n.c_str());
+    }
     assert(i!=val.cend());
     return i->second;
   }
@@ -60,7 +69,7 @@ class Cache {
 public:
 
   std::map<std::string,int> intVals;
-  std::map<std::string,std::vector<int> > vintVals;
+  //std::map<std::string,std::vector<int> > vintVals;
   std::map<std::string,double> realVals;
   std::map<std::string,std::vector<ComplexD> > vcVals;
   std::set<int> keep_t0, keep_t0_lgl;
@@ -70,6 +79,11 @@ public:
   std::map< std::string, std::vector< Matrix< N, ComplexD > > > moms;
   std::map< int, std::vector< Matrix< 4*N, ComplexD > > > peramb;
   std::map< int, std::vector< std::map<int, Matrix< 4*N, ComplexD > > > > lgl;
+
+#define NTBASE 65536
+#define NTPAIR(a,b) ( (a)*NTBASE + (b) )
+#define NTA(p) ( (p) / NTBASE )
+#define NTB(p) ( (p) % NTBASE )
 
 #define SIDX(n,s) ((n)*4 + (s))
 
@@ -110,9 +124,10 @@ public:
     return true;
   }
 
-  bool fill_gamma(int n,int np,int s,int sp,int t0,int mu,int prec,std::vector<ComplexD>& res) {
+  bool fill_gamma(int n,int np,int s,int sp,int t0,int t1,int mu,int prec,std::vector<ComplexD>& res) {
 
-    if (!keep_t0_lgl.count(t0))
+    int P = NTPAIR(t0,t1);
+    if (!keep_t0_lgl.count(P))
       return false;
 
     if (prec != keep_prec)
@@ -124,7 +139,7 @@ public:
       return true;
     }
 
-    auto& p=lgl[t0];
+    auto& p=lgl[P];
     if (p.size() == 0) {
       p.resize(res.size());
     }
@@ -149,10 +164,10 @@ public:
     return true;
   }
 
-  bool fill_mom(int mx,int my,int mz,int n,int np,std::vector<ComplexD>& res) {
+  bool fill_mom(char* tag, int mx,int my,int mz,int n,int np,std::vector<ComplexD>& res) {
     //assert(res.size() == NT);
-    char buf[64];
-    sprintf(buf,"%d_%d_%d",mx,my,mz);
+    char buf[2048];
+    sprintf(buf,"%s/%d_%d_%d",tag,mx,my,mz);
 
     if (!keep_mom.count(buf))
       return false;
@@ -190,20 +205,45 @@ public:
       tag+=2;
       assert(sscanf(tag,"n_%d_%d_s_%d_%d_t_%d",&n,&np,&s,&sp,&t0)==5);
       return fill_peramb(n,np,s,sp,t0,prec,res);
-    } else if (!strncmp(tag,"mom",3)) {
-      tag+=4;
-      int mx,my,mz,n,np;
-      assert(sscanf(tag,"%d_%d_%d_n_%d_%d",&mx,&my,&mz,&n,&np)==5);
-      return fill_mom(mx,my,mz,n,np,res);
     } else if (tag[0]=='G') {
       tag+=1;
+      char* torig = tag;
       int mu = *tag - '0';
+      if (*(tag+1)=='G') {
+	tag+=2;
+	mu=10*mu + (*tag - '0');
+	//printf("%d\n",mu);
+      }
       tag+=6;
       int prec = *tag - '0';
       tag+=2;
-      int n,np,s,sp,t0;
-      assert(sscanf(tag,"n_%d_%d_s_%d_%d_t_%d",&n,&np,&s,&sp,&t0)==5);
-      return fill_gamma(n,np,s,sp,t0,mu,prec,res);
+      int n,np,s,sp,t0,t1;
+      if (sscanf(tag,"n_%d_%d_s_%d_%d_t_%d_%d",&n,&np,&s,&sp,&t0,&t1)==6) {
+	return fill_gamma(n,np,s,sp,t0,t1,mu,prec,res);
+      } else if (sscanf(tag,"n_%d_%d_s_%d_%d_t_%d",&n,&np,&s,&sp,&t0)==5) {
+	return fill_gamma(n,np,s,sp,t0,t0,mu,prec,res);
+      } else {
+	printf("# %s | %s\n",tag,torig); //0_prec1/n_0_0_s_0_0_t_0
+	assert(0);
+      }
+    } else {
+      char cat[2048];
+      int mx,my,mz,n,np;
+      
+      assert(strlen(tag) < 2048);
+      strcpy(cat,tag);
+
+      char* slash = strchr(cat,'/');
+      if (slash) {
+	*slash = '\0';
+	slash++;
+	
+	if (sscanf(slash,"%d_%d_%d_n_%d_%d",&mx,&my,&mz,&n,&np)!=5) {
+	  fprintf(stderr,"Tag: %s\n",tag);
+	  exit(2);
+	}
+	return fill_mom(cat,mx,my,mz,n,np,res);
+      }
     }
 
     return false;
@@ -213,7 +253,7 @@ public:
 };
 
 template<int N>
-std::vector<int> getMomParam(Params& p, Cache<N>& ca, std::vector<std::string>& args, int iarg, int iter) {
+std::string getMomParam(Params& p, Cache<N>& ca, std::vector<std::string>& args, int iarg, int iter) {
   if (args.size() <= iarg) {
     std::cout << "Missing argument " << iarg << " for command " << args[0] << std::endl;
     assert(0);
@@ -231,22 +271,29 @@ std::vector<int> getMomParam(Params& p, Cache<N>& ca, std::vector<std::string>& 
     n = args[iarg] + suf;
   }
 
-  auto f = ca.vintVals.find(n);
-  if (f == ca.vintVals.end()) {
-    std::vector<int> v;
-    std::string sv = isConst ? n.substr(1) : p.get(n.c_str());
+  //auto f = ca.vintVals.find(n);
+  //if (f == ca.vintVals.end()) 
+  {
+    std::vector<std::string> v;
+    std::string sv = isConst ? n.substr(1,n.length()-2) : p.get(n.c_str());
     if (!mpi_id)
       std::cout << p.loghead() << "Set " << n << " to " << sv << std::endl;
     p.parse(v,sv);
-    ca.vintVals[n] = v;
+    //ca.vintVals[n] = v;
       
-    assert(v.size() == 3);
-    sprintf(suf,"%d_%d_%d",v[0],v[1],v[2]);
-    ca.keep_mom.insert(suf);
-    return v;
+    std::string buf;
+    if (v.size() == 3) {
+      buf="mom/" + v[0] + "_" + v[1] + "_" + v[2];
+    } else if (v.size() == 4) {
+      buf=v[3] + "/" + v[0] + "_" + v[1] + "_" + v[2];
+    } else {
+      fprintf(stderr,"Unknown matrix %s\n",sv.c_str());
+      exit(2);
+    }
+
+    ca.keep_mom.insert(buf);
+    return buf;
   }  
-    
-  return f->second;
 }
 
 template<int N>
@@ -349,7 +396,7 @@ double getRealParam(Params& p, Cache<N>& ca, std::vector<std::string>& args, int
   return f->second;
 }
 
-enum T_FLAG { TF_NONE, TF_IST0_PERAMB, TF_IST0_LGL };
+enum T_FLAG { TF_NONE, TF_IST0_PERAMB };
 template<int N>
 int getTimeParam(Params& p, Cache<N>& ca, std::vector<std::string>& args, int iarg, int iter, T_FLAG tf) {
   if (args.size() <= iarg) {
@@ -371,8 +418,6 @@ int getTimeParam(Params& p, Cache<N>& ca, std::vector<std::string>& args, int ia
 
   if (tf == TF_IST0_PERAMB)
     ca.keep_t0.insert(f->second);
-  else if (tf == TF_IST0_LGL)
-    ca.keep_t0_lgl.insert(f->second);
 
   return f->second;
 }
@@ -398,6 +443,9 @@ public:
 template<int N>
 void parse(ComplexD& result, std::string contr, Params& p, Cache<N>& ca, int iter, bool learn, ValueCache<ComplexD>& vc,  
 	   ValueCache< Matrix< 4*N, ComplexD > >& mc) {
+
+  debug.file = contr;
+  debug.iter = iter;
 
   char line[2048];
 
@@ -530,14 +578,15 @@ void parse(ComplexD& result, std::string contr, Params& p, Cache<N>& ca, int ite
 	factor[factor.size()-1] *= M.trace();
       }
     } else if (!args[0].compare("MOM")) {
-      std::vector<int> mom = getMomParam(p,ca,args,1,iter);
+      std::string buf = getMomParam(p,ca,args,1,iter);
       int t = getTimeParam(p,ca,args,2,iter,TF_NONE);
+      
       if (!learn) {
-	assert(mom.size() == 3);
-	char buf[64];
-	sprintf(buf,"%d_%d_%d",mom[0],mom[1],mom[2]);
 	const auto& m=ca.moms.find(buf);
-	assert(m != ca.moms.end());
+	if (m == ca.moms.end()) {
+	  fprintf(stderr,"Could not find matrix %s\n",buf.c_str());
+	  exit(1);
+	}
 #pragma omp parallel
  	{
 	  fast_mult_mode(res,M, m->second[t], tmp);
@@ -573,15 +622,17 @@ void parse(ComplexD& result, std::string contr, Params& p, Cache<N>& ca, int ite
 	fast_cp(M,res);
       }
     } else if (!args[0].compare("LIGHT_LGAMMA_LIGHT")) {
-      int t0 = getTimeParam(p,ca,args,1,iter,TF_IST0_LGL);
+      int t0 = getTimeParam(p,ca,args,1,iter,TF_NONE);
       int t = getTimeParam(p,ca,args,2,iter,TF_NONE);
       int mu = getIntParam(p,ca,args,3,iter);
-      int t1 = getTimeParam(p,ca,args,4,iter,TF_IST0_LGL);
+      int t1 = getTimeParam(p,ca,args,4,iter,TF_NONE);
+      int p=NTPAIR(t0,t1);
       if (!learn) {
-	assert(t0 == t1); // only this works so far
-	assert(ca.lgl[t0].size() > t);
-	fast_mult(res,M, ca.lgl[t0][t][mu], tmp);
+	assert(ca.lgl[p].size() > t);
+	fast_mult(res,M, ca.lgl[p][t][mu], tmp);
 	fast_cp(M,res);
+      } else {
+	ca.keep_t0_lgl.insert(p);
       }
     } else {
       std::cout << "Unknown command " << args[0] << " in line " << line << std::endl;
