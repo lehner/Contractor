@@ -320,10 +320,10 @@ void random_mat(Matrix<N, ComplexD>& A) {
 }
 
 template<int N>
-void identity_mat(Matrix<N, ComplexD>& A) {
+void identity_mat(Matrix<N, ComplexD>& A, ComplexD v = 1.0) {
   for (int i=0;i<N;i++)
     for (int j=0;j<N;j++)
-      A(i,j)=(i==j) ? 1.0 : 0.0;
+      A(i,j)=(i==j) ? v : 0.0;
 }
 
 
@@ -359,6 +359,15 @@ void fast_dag(Matrix<N, ComplexD>& A, Matrix<N, ComplexD>& B) {
   }
 }
 
+template<int N>
+void fast_addto(Matrix<N, ComplexD>& A, Matrix<N, ComplexD>& B) {
+  ComplexD* pA = &A._internal[0];
+  ComplexD* pB = &B._internal[0];
+#pragma omp for
+  for (int ab=0;ab<N*N;ab++) {
+    pA[ab] += pB[ab];
+  }
+}
 
 template<int N>
 void fast_cp(Matrix<N, ComplexD>& A, Matrix<N, ComplexD>& B) {

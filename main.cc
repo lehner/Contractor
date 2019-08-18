@@ -233,7 +233,7 @@ public:
       assert(strlen(tag) < 2048);
       strcpy(cat,tag);
 
-      char* slash = strchr(cat,'/');
+      char* slash = strrchr(cat,'/');
       if (slash) {
 	*slash = '\0';
 	slash++;
@@ -469,6 +469,7 @@ void parse(ComplexD& result, std::string contr, Params& p, Cache<N>& ca, int ite
 
   std::vector<ComplexD> factor;
   Matrix< 4*N, ComplexD > M, tmp, tmp2, res;
+  Matrix< N, ComplexD > tmpc;
   std::vector<std::string> ttr;
 
   Perf perf;
@@ -553,12 +554,32 @@ void parse(ComplexD& result, std::string contr, Params& p, Cache<N>& ca, int ite
       }
     } else if (!args[0].compare("BEGINMDEFINE")) {
       if (!learn) {
-	identity_mat(M);
+	if (args.size() == 1) {
+	  identity_mat(M);
+	} else if (args.size() == 3) {
+	  identity_mat(M,ComplexD( atof( args[1].c_str()), atof( args[2].c_str()) ));
+	  printf("MUL %s %s\n",args[1].c_str(),args[2].c_str());
+	} else {
+	  fprintf(stderr,"Invalid number of arguments for BEGINMDEFINE!\n");
+	  exit(2);
+	}
       }
     } else if (!args[0].compare("ENDMDEFINE")) {
-      assert(args.size() == 2);
       if (!learn) {
-	mc.put(args[1],M);
+	if (args.size() == 2) {
+	  mc.put(args[1],M);
+	} else if (args.size() == 3) {
+	  assert(!args[2].compare("+"));
+	  tmp = mc.get(args[1]);
+#pragma omp parallel
+	  {
+	    fast_addto(tmp,M);
+	  }
+	  mc.put(args[1],tmp);
+	} else {
+	  fprintf(stderr,"Invalid syntax of ENDMDEFINE!\n");
+	  exit(3);
+	}
       }
     } else if (!args[0].compare("EVAL")) {
       assert(args.size() == 2);
@@ -590,6 +611,23 @@ void parse(ComplexD& result, std::string contr, Params& p, Cache<N>& ca, int ite
 #pragma omp parallel
  	{
 	  fast_mult_mode(res,M, m->second[t], tmp);
+	}
+	fast_cp(M,res);
+      }
+    } else if (!args[0].compare("MOMDAG")) {
+      std::string buf = getMomParam(p,ca,args,1,iter);
+      int t = getTimeParam(p,ca,args,2,iter,TF_NONE);
+      
+      if (!learn) {
+	const auto& m=ca.moms.find(buf);
+	if (m == ca.moms.end()) {
+	  fprintf(stderr,"Could not find matrix %s\n",buf.c_str());
+	  exit(1);
+	}
+#pragma omp parallel
+ 	{
+	  fast_dag(tmpc,m->second[t]);
+	  fast_mult_mode(res,M, tmpc, tmp);
 	}
 	fast_cp(M,res);
       }

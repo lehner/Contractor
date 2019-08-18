@@ -56,7 +56,11 @@ class BufferedIO {
     data.resize(to_read);
 
     double t0=dclock();
-    assert(fread(&data[0],to_read,1,f)==1);
+    if (fread(&data[0],to_read,1,f)!=1) {
+      fprintf(stderr,"Error: %s %llu %llu %llu\n",
+	      fn.c_str(),pos,to_read,left);
+      exit(2);
+    }
     double t1=dclock();
 
     pos += to_read;
@@ -116,7 +120,7 @@ class Correlators {
     int ntag;
     uint32_t crc32, crc32_comp;
     int NT;
-    char buf[1024];
+    char buf[4096];
 
     size_t nadded = 0;
     size_t nskipped = 0;
