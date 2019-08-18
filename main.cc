@@ -558,7 +558,6 @@ void parse(ComplexD& result, std::string contr, Params& p, Cache<N>& ca, int ite
 	  identity_mat(M);
 	} else if (args.size() == 3) {
 	  identity_mat(M,ComplexD( atof( args[1].c_str()), atof( args[2].c_str()) ));
-	  printf("MUL %s %s\n",args[1].c_str(),args[2].c_str());
 	} else {
 	  fprintf(stderr,"Invalid number of arguments for BEGINMDEFINE!\n");
 	  exit(2);
@@ -591,6 +590,16 @@ void parse(ComplexD& result, std::string contr, Params& p, Cache<N>& ca, int ite
       assert(args.size() == 2);
       if (!learn) {
 	fast_mult(res,M, mc.get(args[1]), tmp);
+	fast_cp(M,res);
+      }
+    } else if (!args[0].compare("EVALMDAG")) {
+      assert(args.size() == 2);
+      if (!learn) {
+#pragma omp parallel
+	{
+	  fast_dag(tmp2,mc.get(args[1]));	
+	}
+	fast_mult(res,M, tmp2, tmp); // dag
 	fast_cp(M,res);
       }
     } else if (!args[0].compare("ENDTRACE")) {
