@@ -451,6 +451,10 @@ public:
   File(const char* fn, const char* fmt) {
     char line[2048];
     FILE* f = fopen(fn,fmt);
+    if (!f) {
+      fprintf(stderr,"Failed to open %s\n",fn);
+      exit(1);
+    }
     while (!::feof(f)) {
       if (!::fgets(line,sizeof(line),f))
 	break;
@@ -468,6 +472,7 @@ public:
     if (feof())
       return 0;
     strncpy(str,lines[cur++].c_str(),num);
+    return str;
   }
 
   void close() {
