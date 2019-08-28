@@ -440,6 +440,62 @@ public:
   }
 };
 
+class File {
+public:
+  std::vector<std::string> lines;
+  size_t cur;
+  File() {
+    cur=0;
+  }
+
+  File(const char* fn, const char* fmt) {
+    char line[2048];
+    FILE* f = fopen(fn,fmt);
+    while (!::feof(f)) {
+      if (!::fgets(line,sizeof(line),f))
+	break;
+      lines.push_back(line);
+    }
+    fclose(f);
+    cur=0;
+  }
+
+  bool feof() {
+    return cur == lines.size();
+  }
+
+  char* fgets(char* str, int num) {
+    if (feof())
+      return 0;
+    strncpy(str,lines[cur++].c_str(),num);
+  }
+
+  void close() {
+    cur=0;
+  }
+
+  void reset() {
+    cur=0;
+  }
+};
+
+class FileCache {
+public:
+  std::map<std::string,File> files;
+  File& open(const char* fn, const char* fmt) {
+    std::string tag = std::string(fn) + "|" + fmt;
+    auto f = files.find(tag);
+    if (f==files.end()) {
+      files[tag] = File(fn,fmt);
+      return files[tag];
+    }
+    f->second.reset();
+    return f->second;
+  }
+};
+
+FileCache fc;
+
 template<int N>
 void parse(ComplexD& result, std::string contr, Params& p, Cache<N>& ca, int iter, bool learn, ValueCache<ComplexD>& vc,  
 	   ValueCache< Matrix< 4*N, ComplexD > >& mc) {
@@ -456,8 +512,7 @@ void parse(ComplexD& result, std::string contr, Params& p, Cache<N>& ca, int ite
 
   double t0 = dclock();
 
-  FILE* f = fopen(contr.c_str(),"rt");
-  assert(f);
+  File& f = fc.open(contr.c_str(),"rt");
 
   //
   // Logic:
@@ -471,10 +526,11 @@ void parse(ComplexD& result, std::string contr, Params& p, Cache<N>& ca, int ite
   Matrix< 4*N, ComplexD > M, tmp, tmp2, res;
   Matrix< N, ComplexD > tmpc;
   std::vector<std::string> ttr;
+  bool trace_open = false;
 
   Perf perf;
-  while (!feof(f)) {
-    if (!fgets(line,sizeof(line),f))
+  while (!f.feof()) {
+    if (!f.fgets(line,sizeof(line)))
       break;
 
     for (int i=strlen(line)-1;i>=0;i--)
@@ -538,8 +594,11 @@ void parse(ComplexD& result, std::string contr, Params& p, Cache<N>& ca, int ite
 	factor.push_back( ComplexD( atof( args[1].c_str()), atof( args[2].c_str() ) ) );
       }
     } else if (!args[0].compare("BEGINTRACE")) {
-      if (!learn)
+      if (!learn) {
+	assert(!trace_open);
 	identity_mat(M);
+	trace_open=true;
+      }
     } else if (!args[0].compare("BEGINDEFINE")) {
       if (!learn) {
 	factor.push_back( 1.0 );
@@ -547,6 +606,7 @@ void parse(ComplexD& result, std::string contr, Params& p, Cache<N>& ca, int ite
     } else if (!args[0].compare("ENDDEFINE")) {
       assert(args.size() == 2);
       if (!learn) {
+	assert(!trace_open);
 	assert(factor.size());
 	ComplexD val = factor[factor.size()-1];
 	vc.put(args[1],val);
@@ -604,8 +664,10 @@ void parse(ComplexD& result, std::string contr, Params& p, Cache<N>& ca, int ite
       }
     } else if (!args[0].compare("ENDTRACE")) {
       if (!learn) {
+	assert(trace_open);
 	assert(factor.size());
 	factor[factor.size()-1] *= M.trace();
+	trace_open=false;
       }
     } else if (!args[0].compare("MOM")) {
       std::string buf = getMomParam(p,ca,args,1,iter);
@@ -689,11 +751,17 @@ void parse(ComplexD& result, std::string contr, Params& p, Cache<N>& ca, int ite
       perf.end(args[0]);
   }
 
-  fclose(f);
+  f.close();
 
   double t1=dclock();
 
   if (!learn) {
+    // mpi barrier to synchronize ranks
+    {
+      std::vector<ComplexD> d(1,0);
+      glb_sum(d);
+    }
+
     if (!mpi_id) {
       std::cout << "Processing iteration " << iter << " of " << contr << " in " << (t1-t0) << " s" << std::endl;
       perf.print();
@@ -849,6 +917,7 @@ void run(Params& p,int argc,char* argv[]) {
 	  assert(_dt[iter][jj] >= 0 && _dt[iter][jj] < NT);
 	
 	  ComplexD& t = f->second[_dt[iter][jj]];
+	  assert(rm.find(_contractions[iter][jj]) != rm.end());
 	  ComplexD v = _scale[iter][jj] * rm[_contractions[iter][jj]];
 	  t+=v;
 
