@@ -31,12 +31,21 @@ class BufferedIO {
 
  public:
    BufferedIO(std::string _fn, size_t _buf_size) : buf_size(_buf_size), fn(_fn) {
-    f = fopen(fn.c_str(),"rb");
-    assert(f);
+    if (!mpi_id) {
+      f = fopen(fn.c_str(),"rb");
+      assert(f);
 
-    fseeko(f,0,SEEK_END);
-    size = ftello(f);
-    fseeko(f,0,SEEK_SET);
+      fseeko(f,0,SEEK_END);
+      size = ftello(f);
+      fseeko(f,0,SEEK_SET);
+
+    } else {
+      f=0;
+      size = 0;
+    }
+
+    glb_sum(size);
+
     pos = 0;
 
     fill();
@@ -48,6 +57,7 @@ class BufferedIO {
     off_t to_read = buf_size;
     off_t left = size - pos;
 
+    // TODO: this can be done by only the leading rank, then shared over mpi
     assert(left > 0);
 
     if (to_read > left)
@@ -56,11 +66,16 @@ class BufferedIO {
     data.resize(to_read);
 
     double t0=dclock();
-    if (fread(&data[0],to_read,1,f)!=1) {
-      fprintf(stderr,"Error: %s %llu %llu %llu\n",
-	      fn.c_str(),pos,to_read,left);
-      exit(2);
+    if (!mpi_id) {
+      if (fread(&data[0],to_read,1,f)!=1) {
+	fprintf(stderr,"Error: %s %llu %llu %llu\n",
+		fn.c_str(),pos,to_read,left);
+	exit(2);
+      }
+    } else {
+      memset(&data[0],0,to_read);
     }
+    glb_sum(data);
     double t1=dclock();
 
     pos += to_read;
@@ -98,7 +113,9 @@ class BufferedIO {
   }
 
   ~BufferedIO() {
-    fclose(f);
+    if (!mpi_id) {
+      fclose(f);
+    }
   }
 };
 

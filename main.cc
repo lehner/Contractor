@@ -27,6 +27,21 @@ void glb_sum(std::vector<ComplexD>& v) {
   v=t;
 }
 
+void glb_sum(std::vector<char>& v) {
+  std::vector<char> t(v.size());
+  assert(v.size() < 4294967296);
+  MPI_Allreduce(&v[0], &t[0], v.size(), MPI_CHAR, MPI_SUM,
+		MPI_COMM_WORLD);
+  v=t;
+}
+
+void glb_sum(off_t& s) {
+  off_t t;
+  assert(sizeof(off_t) == sizeof(unsigned long long));
+  MPI_Allreduce(&s, &t, 1, MPI_UNSIGNED_LONG_LONG, MPI_SUM, MPI_COMM_WORLD);
+  s=t;
+}
+
 inline double dclock() {
   struct timeval tv;
   gettimeofday(&tv,NULL);
