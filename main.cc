@@ -601,7 +601,7 @@ void parse(ComplexD& result, std::string contr, Params& p, Cache<N>& ca, int ite
     } else if (!args[0].compare("BEGINTRACE")) {
       if (!learn) {
 	assert(!trace_open);
-	identity_mat(M);
+	identity_mat(M); // TODO: make identity_mat faster, threading
 	trace_open=true;
       }
     } else if (!args[0].compare("BEGINDEFINE")) {
@@ -761,12 +761,6 @@ void parse(ComplexD& result, std::string contr, Params& p, Cache<N>& ca, int ite
   double t1=dclock();
 
   if (!learn) {
-    // mpi barrier to synchronize ranks
-    {
-      std::vector<ComplexD> d(1,0);
-      glb_sum(d);
-    }
-
     if (!mpi_id) {
       std::cout << "Processing iteration " << iter << " of " << contr << " in " << (t1-t0) << " s" << std::endl;
       perf.print();
