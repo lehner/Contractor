@@ -33,7 +33,10 @@ class BufferedIO {
    BufferedIO(std::string _fn, size_t _buf_size) : buf_size(_buf_size), fn(_fn) {
     if (!mpi_id) {
       f = fopen(fn.c_str(),"rb");
-      assert(f);
+      if (!f) {
+	fprintf(stderr,"Could not open %s\n",fn.c_str());
+	exit(1);
+      }
 
       fseeko(f,0,SEEK_END);
       size = ftello(f);
