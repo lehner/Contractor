@@ -13,9 +13,13 @@
 #include <set>
 #include <omp.h>
 #include <mpi.h>
-#include <mkl.h>
+//#include <mkl.h>
+extern "C" {
+#include <cblas.h>
+};
 
 int mpi_n, mpi_id;
+int thread_n;
 
 #include "Params.h"
 typedef std::complex<double> ComplexD;
@@ -51,10 +55,10 @@ inline double dclock() {
 #include "Correlators.h"
 #include "Tensor.h"
 
-struct {
+struct debug_t {
   std::string file;
   int iter;
-} debug;
+};
 
 template<typename T>
 class ValueCache {
@@ -62,7 +66,7 @@ public:
   std::map<std::string,T> val;
   ValueCache() {
   }
-  T& get(const std::string& n) {
+  T& get(const std::string& n, debug_t& debug) {
     const auto& i = val.find(n);
     if (i==val.cend()) {
       fprintf(stderr,"Error: in %s iter %d missing value for %s\n",
@@ -79,14 +83,22 @@ public:
   }
 };
 
-template<int N>
-class Cache {
-public:
 
+class LocalCache {
+public:
   std::map<std::string,int> intVals;
   //std::map<std::string,std::vector<int> > vintVals;
   std::map<std::string,double> realVals;
   std::map<std::string,std::vector<ComplexD> > vcVals;
+
+  LocalCache() {
+  }
+};
+
+template<int N>
+class Cache {
+public:
+
   std::set<int> keep_t0, keep_t0_lgl;
   std::set<std::string> keep_mom;
   int keep_prec;
@@ -268,7 +280,7 @@ public:
 };
 
 template<int N>
-std::string getMomParam(Params& p, Cache<N>& ca, std::vector<std::string>& args, int iarg, int iter) {
+std::string getMomParam(Params& p, Cache<N>& ca, std::vector<std::string>& args, int iarg, int iter, bool learn) {
   if (args.size() <= iarg) {
     std::cout << "Missing argument " << iarg << " for command " << args[0] << std::endl;
     assert(0);
@@ -306,13 +318,14 @@ std::string getMomParam(Params& p, Cache<N>& ca, std::vector<std::string>& args,
       exit(2);
     }
 
-    ca.keep_mom.insert(buf);
+    if (learn)
+      ca.keep_mom.insert(buf);
     return buf;
   }  
 }
 
-template<int N>
-std::vector<ComplexD> getVCParam(Params& p, Cache<N>& ca, std::vector<std::string>& args, int iarg, int iter) {
+//template<int N>
+std::vector<ComplexD> getVCParam(Params& p, LocalCache& lc, std::vector<std::string>& args, int iarg, int iter) {
   if (args.size() <= iarg) {
     std::cout << "Missing argument " << iarg << " for command " << args[0] << std::endl;
     assert(0);
@@ -329,22 +342,22 @@ std::vector<ComplexD> getVCParam(Params& p, Cache<N>& ca, std::vector<std::strin
     n = args[iarg] + suf;
   }
 
-  auto f = ca.vcVals.find(n);
-  if (f == ca.vcVals.end()) {
+  auto f = lc.vcVals.find(n);
+  if (f == lc.vcVals.end()) {
     std::vector<ComplexD> v;
     std::string sv = isConst ? n.substr(1) : p.get(n.c_str());
     if (!mpi_id)
       std::cout << p.loghead() << "Set " << n << " to " << sv << std::endl;
     p.parse(v,sv);
-    ca.vcVals[n] = v;
+    lc.vcVals[n] = v;
     return v;
   }  
     
   return f->second;
 }
 
-template<int N>
-int getIntParam(Params& p, Cache<N>& ca, std::vector<std::string>& args, int iarg, int iter) {
+//template<int N>
+int getIntParam(Params& p, LocalCache& lc, std::vector<std::string>& args, int iarg, int iter) {
   if (args.size() <= iarg) {
     std::cout << "Missing argument " << iarg << " for command " << args[0] << std::endl;
     assert(0);
@@ -362,23 +375,23 @@ int getIntParam(Params& p, Cache<N>& ca, std::vector<std::string>& args, int iar
     n = args[iarg] + suf;
   }
 
-  auto f = ca.intVals.find(n);
-  if (f == ca.intVals.end()) {
+  auto f = lc.intVals.find(n);
+  if (f == lc.intVals.end()) {
     int v;
     if (isConst) {
       v = atoi(n.c_str());
     } else {
       p.get(n.c_str(),v);
     }
-    ca.intVals[n] = v;
+    lc.intVals[n] = v;
     return v;
   }  
     
   return f->second;
 }
 
-template<int N>
-double getRealParam(Params& p, Cache<N>& ca, std::vector<std::string>& args, int iarg, int iter) {
+//template<int N>
+double getRealParam(Params& p, LocalCache& lc, std::vector<std::string>& args, int iarg, int iter) {
   if (args.size() <= iarg) {
     std::cout << "Missing argument " << iarg << " for command " << args[0] << std::endl;
     assert(0);
@@ -396,15 +409,15 @@ double getRealParam(Params& p, Cache<N>& ca, std::vector<std::string>& args, int
     n = args[iarg] + suf;
   }
 
-  auto f = ca.realVals.find(n);
-  if (f == ca.realVals.end()) {
+  auto f = lc.realVals.find(n);
+  if (f == lc.realVals.end()) {
     double v;
     if (isConst) {
       v = atof(n.c_str());
     } else {
       p.get(n.c_str(),v);
     }
-    ca.realVals[n] = v;
+    lc.realVals[n] = v;
     return v;
   }  
     
@@ -413,7 +426,7 @@ double getRealParam(Params& p, Cache<N>& ca, std::vector<std::string>& args, int
 
 enum T_FLAG { TF_NONE, TF_IST0_PERAMB };
 template<int N>
-int getTimeParam(Params& p, Cache<N>& ca, std::vector<std::string>& args, int iarg, int iter, T_FLAG tf) {
+int getTimeParam(Params& p, Cache<N>& ca, LocalCache& lc, std::vector<std::string>& args, int iarg, int iter, T_FLAG tf, bool learn) {
   if (args.size() <= iarg) {
     std::cout << "Missing argument " << iarg << " for command " << args[0] << std::endl;
     assert(0);
@@ -423,16 +436,18 @@ int getTimeParam(Params& p, Cache<N>& ca, std::vector<std::string>& args, int ia
   sprintf(suf,"[%d]",iter);
   auto n = args[iarg] + suf;
 
-  auto f = ca.intVals.find(n);
-  if (f == ca.intVals.end()) {
+  auto f = lc.intVals.find(n);
+  if (f == lc.intVals.end()) {
     int v;
     p.get(n.c_str(),v);
-    ca.intVals[n] = v;
-    f = ca.intVals.find(n);
+    lc.intVals[n] = v;
+    f = lc.intVals.find(n);
   }
 
-  if (tf == TF_IST0_PERAMB)
-    ca.keep_t0.insert(f->second);
+  if (learn) {
+    if (tf == TF_IST0_PERAMB)
+      ca.keep_t0.insert(f->second);
+  }
 
   return f->second;
 }
@@ -514,12 +529,12 @@ public:
   }
 };
 
-FileCache fc;
-
 template<int N>
-void parse(ComplexD& result, std::string contr, Params& p, Cache<N>& ca, int iter, bool learn, ValueCache<ComplexD>& vc,  
-	   ValueCache< Matrix< 4*N, ComplexD > >& mc) {
+void parse(ComplexD& result, std::string contr, Params& p, LocalCache& lc, Cache<N>& ca, int iter, bool learn, ValueCache<ComplexD>& vc,  
+	   ValueCache< Matrix< 4*N, ComplexD > >& mc, FileCache& fc) {
 
+  debug_t debug;
+  
   debug.file = contr;
   debug.iter = iter;
 
@@ -568,8 +583,8 @@ void parse(ComplexD& result, std::string contr, Params& p, Cache<N>& ca, int ite
       perf.begin(args[0]);
 
     if (!args[0].compare("LIGHT")) {
-      int t = getTimeParam(p,ca,args,1,iter,TF_NONE);
-      int t0 = getTimeParam(p,ca,args,2,iter,TF_IST0_PERAMB);
+      int t = getTimeParam(p,ca,lc,args,1,iter,TF_NONE, learn);
+      int t0 = getTimeParam(p,ca,lc,args,2,iter,TF_IST0_PERAMB, learn);
 
       if (!learn) {
 	const auto& p = ca.peramb.find(t0);
@@ -580,8 +595,8 @@ void parse(ComplexD& result, std::string contr, Params& p, Cache<N>& ca, int ite
 	fast_cp(M,res);
       }
     } else if (!args[0].compare("LIGHTBAR")) {
-      int t0 = getTimeParam(p,ca,args,1,iter,TF_IST0_PERAMB);
-      int t = getTimeParam(p,ca,args,2,iter,TF_NONE);
+      int t0 = getTimeParam(p,ca,lc,args,1,iter,TF_IST0_PERAMB, learn);
+      int t = getTimeParam(p,ca,lc,args,2,iter,TF_NONE, learn);
       if (!learn) {
 	const auto& p = ca.peramb.find(t0);
 	if (p == ca.peramb.end()) {
@@ -596,13 +611,13 @@ void parse(ComplexD& result, std::string contr, Params& p, Cache<N>& ca, int ite
 	  fflush(stdout);
 	}
 	assert(p != ca.peramb.end());
-#pragma omp parallel
+	//#pragma omp parallel
 	{
 	  fast_spin(res,M,5);
 	  fast_dag(tmp2,p->second[t]);
 	}
 	fast_mult(M,res, tmp2, tmp);
-#pragma omp parallel
+	//#pragma omp parallel
 	{
 	  fast_spin(res,M,5);
 	}
@@ -649,8 +664,8 @@ void parse(ComplexD& result, std::string contr, Params& p, Cache<N>& ca, int ite
 	  mc.put(args[1],M);
 	} else if (args.size() == 3) {
 	  assert(!args[2].compare("+"));
-	  tmp = mc.get(args[1]);
-#pragma omp parallel
+	  tmp = mc.get(args[1],debug);
+	  //#pragma omp parallel
 	  {
 	    fast_addto(tmp,M);
 	  }
@@ -664,20 +679,20 @@ void parse(ComplexD& result, std::string contr, Params& p, Cache<N>& ca, int ite
       assert(args.size() == 2);
       if (!learn) {
 	assert(factor.size());
-	factor[factor.size()-1] *= vc.get(args[1]);
+	factor[factor.size()-1] *= vc.get(args[1],debug);
       }
     } else if (!args[0].compare("EVALM")) {
       assert(args.size() == 2);
       if (!learn) {
-	fast_mult(res,M, mc.get(args[1]), tmp);
+	fast_mult(res,M, mc.get(args[1],debug), tmp);
 	fast_cp(M,res);
       }
     } else if (!args[0].compare("EVALMDAG")) {
       assert(args.size() == 2);
       if (!learn) {
-#pragma omp parallel
+	//#pragma omp parallel
 	{
-	  fast_dag(tmp2,mc.get(args[1]));	
+	  fast_dag(tmp2,mc.get(args[1],debug));	
 	}
 	fast_mult(res,M, tmp2, tmp); // dag
 	fast_cp(M,res);
@@ -690,8 +705,8 @@ void parse(ComplexD& result, std::string contr, Params& p, Cache<N>& ca, int ite
 	trace_open=false;
       }
     } else if (!args[0].compare("MOM")) {
-      std::string buf = getMomParam(p,ca,args,1,iter);
-      int t = getTimeParam(p,ca,args,2,iter,TF_NONE);
+      std::string buf = getMomParam(p,ca,args,1,iter,learn);
+      int t = getTimeParam(p,ca,lc,args,2,iter,TF_NONE, learn);
       
       if (!learn) {
 	const auto& m=ca.moms.find(buf);
@@ -699,15 +714,15 @@ void parse(ComplexD& result, std::string contr, Params& p, Cache<N>& ca, int ite
 	  fprintf(stderr,"Could not find matrix %s\n",buf.c_str());
 	  exit(1);
 	}
-#pragma omp parallel
+	//#pragma omp parallel
  	{
 	  fast_mult_mode(res,M, m->second[t], tmp);
 	}
 	fast_cp(M,res);
       }
     } else if (!args[0].compare("MOMDAG")) {
-      std::string buf = getMomParam(p,ca,args,1,iter);
-      int t = getTimeParam(p,ca,args,2,iter,TF_NONE);
+      std::string buf = getMomParam(p,ca,args,1,iter,learn);
+      int t = getTimeParam(p,ca,lc,args,2,iter,TF_NONE,learn);
       
       if (!learn) {
 	const auto& m=ca.moms.find(buf);
@@ -715,7 +730,7 @@ void parse(ComplexD& result, std::string contr, Params& p, Cache<N>& ca, int ite
 	  fprintf(stderr,"Could not find matrix %s\n",buf.c_str());
 	  exit(1);
 	}
-#pragma omp parallel
+	//#pragma omp parallel
  	{
 	  fast_dag(tmpc,m->second[t]);
 	  fast_mult_mode(res,M, tmpc, tmp);
@@ -723,38 +738,38 @@ void parse(ComplexD& result, std::string contr, Params& p, Cache<N>& ca, int ite
 	fast_cp(M,res);
       }
     } else if (!args[0].compare("MODEWEIGHT")) {
-      std::vector<ComplexD> weights = getVCParam(p,ca,args,1,iter);
+      std::vector<ComplexD> weights = getVCParam(p,lc,args,1,iter);
       if (!learn) {
-#pragma omp parallel
+	//#pragma omp parallel
 	{
 	  fast_mult_dmode(M, weights);
 	}
       }
     } else if (!args[0].compare("MODECUT")) {
-      double lambda = getRealParam(p,ca,args,1,iter);
+      double lambda = getRealParam(p,lc,args,1,iter);
       if (!learn) {
 	std::vector<ComplexD> weights(N);
 	for (int i=0;i<N;i++)
 	  weights[i] = ((double)i < (double)N*lambda) ? 1.0 : 0.0;
-#pragma omp parallel
+	//#pragma omp parallel
 	{
 	  fast_mult_dmode(M, weights);
 	}
       }
     } else if (!args[0].compare("GAMMA")) {
-      int mu = getIntParam(p,ca,args,1,iter);
+      int mu = getIntParam(p,lc,args,1,iter);
       if (!learn) {
-#pragma omp parallel
+	//#pragma omp parallel
 	{
 	  fast_spin(res,M,mu);
 	}
 	fast_cp(M,res);
       }
     } else if (!args[0].compare("LIGHT_LGAMMA_LIGHT")) {
-      int t0 = getTimeParam(p,ca,args,1,iter,TF_NONE);
-      int t = getTimeParam(p,ca,args,2,iter,TF_NONE);
-      int mu = getIntParam(p,ca,args,3,iter);
-      int t1 = getTimeParam(p,ca,args,4,iter,TF_NONE);
+      int t0 = getTimeParam(p,ca,lc,args,1,iter,TF_NONE,learn);
+      int t = getTimeParam(p,ca,lc,args,2,iter,TF_NONE,learn);
+      int mu = getIntParam(p,lc,args,3,iter);
+      int t1 = getTimeParam(p,ca,lc,args,4,iter,TF_NONE,learn);
       int p=NTPAIR(t0,t1);
       if (!learn) {
 	assert(ca.lgl[p].size() > t);
@@ -801,11 +816,13 @@ bool has(std::vector<std::string>& a, std::string& c) {
 template<int N>
 void run(Params& p,int argc,char* argv[]) {
   Correlators c;
-  Cache<N> ca;
 
-  if (argc >= 2 && !strcmp(argv[1],"--performance"))
-    testFastMatrix<4*N>();
-  
+#pragma omp parallel
+  {
+    if (argc >= 2 && !strcmp(argv[1],"--performance"))
+      testFastMatrix<4*N>();
+  }
+
   struct {
     std::vector<std::string> file;
     std::vector<std::string> tag;
@@ -821,6 +838,8 @@ void run(Params& p,int argc,char* argv[]) {
   
   int precision;
   PADD(p,precision);
+
+  Cache<N> ca;
   ca.keep_prec = precision;
   
   // Define output correlator as well
@@ -847,41 +866,58 @@ void run(Params& p,int argc,char* argv[]) {
   assert(_scale.size() == Niter);
   assert(_contractions.size() == Niter);
   assert(_header.size() == Niter);
-  
-  ValueCache<ComplexD> vc;
-  ValueCache< Matrix< 4*N, ComplexD > > mc;
 
-  // parse what we need
-  for (int iter=0;iter<Niter;iter++) {
-    ComplexD res = 0.0;
+  {
+    ValueCache<ComplexD> _vc;
+    ValueCache< Matrix< 4*N, ComplexD > > _mc;
+    FileCache _fc;
+    LocalCache _lc;
 
-    if (iter % mpi_n == mpi_id) {
-      if (_header[iter].size())
-	parse(res,_header[iter],p,ca,iter,true,vc,mc);
-      for (int jj=0;jj<(int)contraction.file.size();jj++) {
-	auto& cc = contraction.file[jj];
-	auto& tt = contraction.tag[jj];
-	if (has(_contractions[iter],tt)) {
-	  parse(res,cc,p,ca,iter,true,vc,mc);
+    // parse what we need
+    for (int iter=0;iter<Niter;iter++) {
+      ComplexD res = 0.0;
+      
+      if (iter % mpi_n == mpi_id) {
+	if (_header[iter].size())
+	  parse(res,_header[iter],p,_lc,ca,iter,true,_vc,_mc,_fc);
+	for (int jj=0;jj<(int)contraction.file.size();jj++) {
+	  auto& cc = contraction.file[jj];
+	  auto& tt = contraction.tag[jj];
+	  if (has(_contractions[iter],tt)) {
+	    parse(res,cc,p,_lc,ca,iter,true,_vc,_mc,_fc);
+	  }
 	}
       }
     }
+
+    // now load inputs with mask for needed parameters
+    for (auto& i : input) {
+      c.load(i,ca);
+    }
   }
 
-  // now load inputs with mask for needed parameters
-  for (auto& i : input) {
-    c.load(i,ca);
-  }
+  std::vector< std::map<std::string, std::vector<ComplexD> > >  thread_res(thread_n);
 
-  // Create
-  std::map<std::string, std::vector<ComplexD> > res;
+#pragma omp parallel
+  {
+    // thread id
+    int thread_id = omp_get_thread_num();
 
-  for (int iter=0;iter<Niter;iter++) {
+    // each thread needs own value cache
+    ValueCache<ComplexD> vc;
+    ValueCache< Matrix< 4*N, ComplexD > > mc;
+    FileCache fc;
+    LocalCache lc;
 
+    // Create
+    std::map<std::string, std::vector<ComplexD> > & res = thread_res[thread_id];
+    
+    for (int iter=0;iter<Niter;iter++) {
+      
       assert(_dt[iter].size() == _scale[iter].size());
       assert(_dt[iter].size() == _contractions[iter].size());
       assert(_dt[iter].size() == _tag[iter].size());
-
+      
       for (int jj=0;jj<_dt[iter].size();jj++) {
 	std::string tt = _tag[iter][jj];
 	auto f = res.find(tt);
@@ -891,61 +927,82 @@ void run(Params& p,int argc,char* argv[]) {
 	    r0[i] = NAN;
 	  res[tt] = r0;
 	}
-
+	
 	f = res.find(tt);
 	ComplexD& t = f->second[_dt[iter][jj]];	  
 	t=0.0;
       }
-  }
+    }
+    
+    // Compute
 
-  // Compute
-  for (int iter=0;iter<Niter;iter++) {
+    //int parallel_n = mpi_n * thread_n;
+    //int parallel_id = thread_id + thread_n * mpi_id;
 
+    for (int iter=0;iter<Niter;iter++) {
+      
       ComplexD r = 0.0;
       std::map<std::string,ComplexD> rm;
-
+      
       if (iter % mpi_n == mpi_id) {
+
+	int local_iter = iter / mpi_n;
+	if (local_iter % thread_n != thread_id)
+	  continue;
+	
 	vc.clear();
 	mc.clear();
 
 	if (_header[iter].size())
-	  parse(r,_header[iter],p,ca,iter,false,vc,mc);
+	  parse(r,_header[iter],p,lc,ca,iter,false,vc,mc,fc);
+
+	
 	for (int jj=0;jj<(int)contraction.file.size();jj++) {
 	  auto& cc = contraction.file[jj];
 	  auto& tt = contraction.tag[jj];
 	  auto& rmm = rm[tt];
-
+	  
 	  if (has(_contractions[iter],tt)) {
 	    rmm = 0.0;
-	    parse(rmm,cc,p,ca,iter,false,vc,mc);
+	    parse(rmm,cc,p,lc,ca,iter,false,vc,mc,fc);
 	  }
 	}
 
 	// do as many cuts as we want
 	for (int jj=0;jj<_dt[iter].size();jj++) {
-
+	  
 	  std::string tt = _tag[iter][jj];
 	  auto f = res.find(tt);
 	  assert(f != res.end());
-
+	  
 	  assert(_dt[iter][jj] >= 0 && _dt[iter][jj] < NT);
-	
+	    
 	  ComplexD& t = f->second[_dt[iter][jj]];
 	  assert(rm.find(_contractions[iter][jj]) != rm.end());
 	  ComplexD v = _scale[iter][jj] * rm[_contractions[iter][jj]];
 	  t+=v;
-
+	  
 	}
       }
+    }
   }
-
-  for (auto& f : res) {
+  
+  for (auto& f : thread_res[0]) {
     char buf[4096]; // bad even if this likely is large enough
     sprintf(buf,"%s",f.first.c_str());
+
+    // first sum over threads
+    std::vector<ComplexD> acc(f.second.size(), 0.0);
+    for (int i=0;i<thread_n;i++) {
+      auto & tres = thread_res[i];
+      for (int j=0;j<f.second.size();j++) {
+	acc[j] += tres.find(f.first)->second[j];
+      }
+    }
     
-    glb_sum(f.second);
-    
-    co.write_correlator(buf,f.second);
+    glb_sum(acc);
+
+    co.write_correlator(buf,acc);
   }
 }
 
@@ -959,18 +1016,25 @@ int main(int argc, char* argv[]) {
   MPI_Comm_size (MPI_COMM_WORLD,&mpi_n);
   MPI_Comm_rank (MPI_COMM_WORLD, &mpi_id);
 
+#pragma omp parallel
+  {
+    thread_n = omp_get_num_threads();
+  }
+  
+  std::cout << "Here MPI rank " << mpi_id << " / " << mpi_n << " has " << thread_n << " threads" << std::endl;
+  
   if (N==60) {
     run<60>(p,argc,argv);
   } else if (N==120) {
     run<120>(p,argc,argv);
   } else if (N==150) {
     run<150>(p,argc,argv);
-  } else if (N==500) {
+  } else if (N==200) {
     run<500>(p,argc,argv);
   } else {
     std::cout << "Unknown basis size " << N << " needs to be added at compile-time for efficiency" << std::endl;
   }
-
+  
   MPI_Finalize();
   return 0;
 }

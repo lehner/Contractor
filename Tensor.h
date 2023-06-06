@@ -290,7 +290,7 @@ void fast_spin(Matrix<N, ComplexD>& A, Matrix<N, ComplexD>& B, int mu) {
     std::cout << "Unknown mu=" << mu << std::endl;
     assert(0);
   }
-#pragma omp for
+  //#pragma omp for
   for (int ab=0;ab<N*N;ab++) {
     int j=ab / N;
     int i=ab % N;
@@ -339,7 +339,7 @@ template<int N>
 void fast_trans(Matrix<N, ComplexD>& A, Matrix<N, ComplexD>& B) {
   ComplexD* pA = &A._internal[0];
   ComplexD* pB = &B._internal[0];
-#pragma omp for
+  //#pragma omp for
   for (int ab=0;ab<N*N;ab++) {
     int j=ab / N;
     int i=ab % N;
@@ -351,7 +351,7 @@ template<int N>
 void fast_dag(Matrix<N, ComplexD>& A, Matrix<N, ComplexD>& B) {
   ComplexD* pA = &A._internal[0];
   ComplexD* pB = &B._internal[0];
-#pragma omp for
+  //#pragma omp for
   for (int ab=0;ab<N*N;ab++) {
     int j=ab / N;
     int i=ab % N;
@@ -363,7 +363,7 @@ template<int N>
 void fast_addto(Matrix<N, ComplexD>& A, Matrix<N, ComplexD>& B) {
   ComplexD* pA = &A._internal[0];
   ComplexD* pB = &B._internal[0];
-#pragma omp for
+  //#pragma omp for
   for (int ab=0;ab<N*N;ab++) {
     pA[ab] += pB[ab];
   }
@@ -382,7 +382,7 @@ void fast_mult_orig(Matrix<N, ComplexD>& A, Matrix<N, ComplexD>& B, Matrix<N, Co
   fast_trans(BT,B);
   ComplexD* pBT = &BT._internal[0];
   ComplexD* pC = &C._internal[0];
-#pragma omp for
+  //#pragma omp for
   for (int ab=0;ab<N*N;ab++) {
     int j=ab / N;
     int i=ab % N;
@@ -415,7 +415,7 @@ void fast_mult_mode(Matrix<N, ComplexD>& A, Matrix<N, ComplexD>& B, Matrix<Nmode
   fast_trans(BT,B);
   ComplexD* pBT = &BT._internal[0];
   ComplexD* pC = &C._internal[0];
-#pragma omp for
+  //#pragma omp for
   for (int ab=0;ab<N*N;ab++) {
     int j=ab / N;
     int i=ab % N;
@@ -435,7 +435,7 @@ template<int N>
   assert(v.size()*4 == N);
 
   ComplexD* pA = &A._internal[0];
-#pragma omp for
+  //#pragma omp for
   for (int ab=0;ab<N*N;ab++) {
     int j=ab / N;
     int i=ab % N;
@@ -467,37 +467,21 @@ void testFastMatrix() {
       ta=dclock();
       fast_mult(A,B,C,_BT_);
       tb=dclock();
-#if 0
-#pragma omp parallel
-    {
-#pragma omp single
-     {
-       std::cout << "Threads: " << omp_get_num_threads() << std::endl;
-      ta=dclock();
-     }
+      double flopsComplexAdd = 2;
+      double flopsComplexMul = 6;
+      double flops = pow(Nt,3.0)*(flopsComplexMul + flopsComplexAdd);
+      double gbs = pow(Nt,3.0)*sizeof(ComplexD)*4.0 / 1024./1024./1024.;
+      std::cout << "Performance of matrix mul: " << (flops/1024./1024./1024./(tb-ta)) << " Gflops/s" 
+	" and memory bandwidth is " << gbs/(tb-ta) << " GB/s "
+		<< std::endl;
+      
+      Ap=B*C;
+      
+      A -= Ap;
+      printf("Norm diff: %g, Norm A: %g\n",A.norm().real(),Ap.norm().real());
 
-     //fast_mult_orig(A,B,C,_BT_);
-     fast_mult(A,B,C,_BT_);
-
-#pragma omp single
-     {
-      tb=dclock();
-     }
-    }
-#endif
-    double flopsComplexAdd = 2;
-    double flopsComplexMul = 6;
-    double flops = pow(Nt,3.0)*(flopsComplexMul + flopsComplexAdd);
-    double gbs = pow(Nt,3.0)*sizeof(ComplexD)*4.0 / 1024./1024./1024.;
-    std::cout << "Performance of matrix mul: " << (flops/1024./1024./1024./(tb-ta)) << " Gflops/s" 
-    " and memory bandwidth is " << gbs/(tb-ta) << " GB/s "
-    << std::endl;
-
-    Ap=B*C;
-
-    A -= Ap;
-    printf("Norm diff: %g, Norm A: %g\n",A.norm().real(),Ap.norm().real());
-
+      assert(A.norm().real() < 1e-14);
+      
     }
   }
 
