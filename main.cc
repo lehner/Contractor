@@ -1009,6 +1009,32 @@ void run(Params& p,int argc,char* argv[]) {
 int main(int argc, char* argv[]) {
   Params p("params.txt");
 
+  // Test initSpinor against fast_spin
+  /*
+  {
+    int l[5] = {0,1,2,3,5};
+    Matrix<4, ComplexD> src;
+    for (int i=0;i<4;i++)
+      for (int j=0;j<4;j++)
+	src(i,j) = ComplexD(i + 0.50812,j + 0.7124);
+    
+    for (int i=0;i<5;i++) {
+      Matrix<4, ComplexD> spin;
+      initSpinor(spin,l[i]);
+      Matrix<4, ComplexD> res1 = src * spin;
+      Matrix<4, ComplexD> res2;
+      fast_spin(res2,src,l[i]);
+
+      res1 -= res2;
+      double eps = res1.norm().real();
+      printf("Test spinor %d: %g\n", l[i], eps);
+      assert(eps < 1e-10);
+    }
+
+    return 0;
+  }
+  */
+
   int N;
   PADD(p,N);
 
