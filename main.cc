@@ -1056,7 +1056,7 @@ int main(int argc, char* argv[]) {
   } else if (N==150) {
     run<150>(p,argc,argv);
   } else if (N==200) {
-    run<500>(p,argc,argv);
+    run<200>(p,argc,argv);
   } else {
     std::cout << "Unknown basis size " << N << " needs to be added at compile-time for efficiency" << std::endl;
   }
