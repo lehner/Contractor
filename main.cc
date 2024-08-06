@@ -106,6 +106,7 @@ public:
   std::map< std::string, std::vector< Matrix< N, ComplexD > > > moms;
   std::map< int, std::vector< Matrix< 4*N, ComplexD > > > peramb;
   std::map< int, std::vector< std::map<int, Matrix< 4*N, ComplexD > > > > lgl;
+  std::map< std::string, std::map< int, std::map< int, std::vector<ComplexD> > > > disco;
 
 #define NTBASE 65536
 #define NTPAIR(a,b) ( (a)*NTBASE + (b) )
@@ -191,6 +192,17 @@ public:
     return true;
   }
 
+  bool fill_disco(int id, char* type, int mu, std::vector<ComplexD>& res) {
+    if (!res.size()) {
+      return true;
+    }
+
+    std::string st = std::string(type);
+    disco[st][mu][id] = res;
+    //printf("Fill st %s mu %d id %d\n",type,mu,id);
+    return true;
+  }
+  
   bool fill_mom(char* tag, int mx,int my,int mz,int n,int np,std::vector<ComplexD>& res) {
     //assert(res.size() == NT);
     char buf[2048];
@@ -224,6 +236,16 @@ public:
 
   bool operator()(char* tag, std::vector<ComplexD>& res) {
 
+    if (!strncmp(&tag[1],"/disco",6)) {
+      char type[128];
+      int id, mu, dim;
+      assert(sscanf(tag,"%d/disco_D_%[^^]^-1_%d.slice%d",&id,type,&mu,&dim)==4);
+      if (dim == 3) {
+	return fill_disco(id, type, mu, res);
+      }
+      return false;
+    }
+    
     tag+=7;
     if (!strncmp(tag,"pera",4)) {
       tag+=11;
@@ -534,6 +556,7 @@ void parse(ComplexD& result, std::string contr, Params& p, LocalCache& lc, Cache
 	   ValueCache< Matrix< 4*N, ComplexD > >& mc, FileCache& fc) {
 
   debug_t debug;
+  bool block_disco = true;
   
   debug.file = contr;
   debug.iter = iter;
@@ -627,6 +650,7 @@ void parse(ComplexD& result, std::string contr, Params& p, LocalCache& lc, Cache
       if (!learn) {
 	assert(args.size() >= 3);
 	factor.push_back( ComplexD( atof( args[1].c_str()), atof( args[2].c_str() ) ) );
+	block_disco = false;
       }
     } else if (!args[0].compare("BEGINTRACE")) {
       if (!learn) {
@@ -778,6 +802,25 @@ void parse(ComplexD& result, std::string contr, Params& p, LocalCache& lc, Cache
       } else {
 	ca.keep_t0_lgl.insert(p);
       }
+    } else if (!args[0].compare("LIGHT_LTADPOLE")) {
+      int t = getTimeParam(p,ca,lc,args,1,iter,TF_NONE,learn);
+      int mu = getIntParam(p,lc,args,2,iter);
+      //printf("Time: %d, mu=%d\n", t, mu);
+      if (!learn) {
+	assert(!trace_open);
+	assert(!block_disco);
+	assert(factor.size());
+	block_disco = true;
+	ComplexD fact = 0.0;
+	double nfact = 0.0;
+	for (auto& x : ca.disco["light_high"][mu]) {
+	  //printf("%d -- \n", x.first);
+	  fact += x.second[t] + ca.disco["low"][mu][x.first][t];
+	  nfact += 1.0;
+	}
+	assert(nfact > 0.5);
+	factor[factor.size()-1] *= fact / nfact;
+      }
     } else {
       std::cout << "Unknown command " << args[0] << " in line " << line << std::endl;
       assert(0);
@@ -894,6 +937,7 @@ void run(Params& p,int argc,char* argv[]) {
     for (auto& i : input) {
       c.load(i,ca);
     }
+
   }
 
   std::vector< std::map<std::string, std::vector<ComplexD> > >  thread_res(thread_n);
